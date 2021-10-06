@@ -26,17 +26,23 @@ int getLocalIP();
 
 void launchWindbot(epro::path_stringview args);
 
+void addWindbotDatabase(epro::path_stringview args);
+
 void installUpdate(epro::path_stringview args);
 
 void openUrl(epro::path_stringview url);
 
 void openFile(epro::path_stringview file);
 
+void shareFile(epro::path_stringview file);
+
 void setTextToClipboard(epro::wstringview text);
 
 const wchar_t* getTextFromClipboard();
 
 void dispatchQueuedMessages();
+
+void showErrorDialog(epro::stringview context, epro::stringview message);
 }
 
 #endif //PORTING_ANDROID_H

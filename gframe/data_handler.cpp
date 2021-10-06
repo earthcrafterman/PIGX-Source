@@ -6,21 +6,30 @@
 #include "deck_manager.h"
 #include "logging.h"
 #include "utils.h"
-#ifndef __ANDROID__
-#include "IrrlichtCommonIncludes/CFileSystem.h"
-#else
-#include "Android/COSAndroidOperator.h"
+#include "windbot.h"
+#include "windbot_panel.h"
+#if IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9
 #include "IrrlichtCommonIncludes1.9/CFileSystem.h"
+#else
+#include "IrrlichtCommonIncludes/CFileSystem.h"
+#endif
+#ifdef __ANDROID__
+#include "Android/COSAndroidOperator.h"
 #include "Android/porting_android.h"
 #endif
 
 namespace ygo {
 
 void DataHandler::LoadDatabases() {
-	if(std::ifstream("cards.cdb").good())
-		dataManager->LoadDB(EPRO_TEXT("cards.cdb"));
-	for(auto& file : Utils::FindFiles(EPRO_TEXT("./expansions/"), { EPRO_TEXT("cdb") }, 2))
-		dataManager->LoadDB(EPRO_TEXT("./expansions/") + file);
+	if(Utils::FileExists(EPRO_TEXT("./cards.cdb"))) {
+		if(dataManager->LoadDB(EPRO_TEXT("./cards.cdb")))
+			WindBot::AddDatabase(EPRO_TEXT("./cards.cdb"));
+	}
+	for(auto& file : Utils::FindFiles(EPRO_TEXT("./expansions/"), { EPRO_TEXT("cdb") }, 2)) {
+		epro::path_string db = EPRO_TEXT("./expansions/") + file;
+		if(dataManager->LoadDB(db))
+			WindBot::AddDatabase(db);
+	}
 	LoadArchivesDB();
 }
 void DataHandler::LoadArchivesDB() {
@@ -72,7 +81,7 @@ void DataHandler::LoadPicUrls() {
 																imgType::ART : imgType::COVER });
 					}
 				}
-				catch(std::exception& e) {
+				catch(const std::exception& e) {
 					ErrorLog(fmt::format("Exception occurred: {}", e.what()));
 				}
 			}
@@ -101,24 +110,24 @@ DataHandler::DataHandler(epro::path_stringview working_dir) {
 	configs->ssl_certificate_path = fmt::format("{}/cacert.cer", porting::internal_storage);
 #endif
 	filesystem = new irr::io::CFileSystem();
+	dataManager = std::unique_ptr<DataManager>(new DataManager());
+	auto strings_loaded = dataManager->LoadStrings(EPRO_TEXT("./config/strings.conf"));
+	strings_loaded = dataManager->LoadStrings(EPRO_TEXT("./expansions/strings.conf")) || strings_loaded;
+	if(!strings_loaded)
+		throw std::runtime_error("Failed to load strings!");
 	Utils::filesystem = filesystem;
-	Utils::working_dir = { working_dir.data(), working_dir.size() };
+	Utils::working_dir = Utils::NormalizePath(working_dir);
 	LoadZipArchives();
 	deckManager = std::unique_ptr<DeckManager>(new DeckManager());
 	gitManager = std::unique_ptr<RepoManager>(new RepoManager());
-	sounds = std::unique_ptr<SoundManager>(new SoundManager(configs->soundVolume / 100.0, configs->musicVolume / 100.0, configs->enablesound, configs->enablemusic, working_dir));
+	sounds = std::unique_ptr<SoundManager>(new SoundManager(configs->soundVolume / 100.0, configs->musicVolume / 100.0, configs->enablesound, configs->enablemusic, Utils::working_dir));
 	gitManager->LoadRepositoriesFromJson(configs->user_configs);
 	gitManager->LoadRepositoriesFromJson(configs->configs);
-	dataManager = std::unique_ptr<DataManager>(new DataManager());
 	imageDownloader = std::unique_ptr<ImageDownloader>(new ImageDownloader());
 	LoadDatabases();
 	LoadPicUrls();
 	deckManager->LoadLFList();
-	auto strings_loaded = dataManager->LoadStrings(EPRO_TEXT("./config/strings.conf"));
-	strings_loaded = dataManager->LoadStrings(EPRO_TEXT("./expansions/strings.conf")) || strings_loaded;
-	if(!strings_loaded) {
-		throw std::runtime_error("Failed to load strings!");
-	}
+	WindBotPanel::absolute_deck_path = Utils::ToUnicodeIfNeeded(Utils::GetAbsolutePath(EPRO_TEXT("./deck")));
 }
 DataHandler::~DataHandler() {
 	if(filesystem)

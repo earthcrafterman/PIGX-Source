@@ -10,7 +10,10 @@
 #include "utils.h"
 #include "libgit2.hpp"
 
-#define MAX_HISTORY_LENGTH 100
+static constexpr int MAX_HISTORY_LENGTH = 100;
+static constexpr int FETCH_OBJECTS_PERCENTAGE = 60;
+static constexpr int DELTA_OBJECTS_PERCENTAGE = 80;
+static constexpr int CHECKOUT_PERCENTAGE = 99;
 
 namespace ygo {
 
@@ -21,32 +24,37 @@ namespace ygo {
 bool GitRepo::Sanitize() {
 	if(url.empty())
 		return false;
+
+	if(repo_path.size())
+		repo_path = fmt::format("./{}", repo_path);
+
 	if(repo_name.empty() && repo_path.empty()) {
 		repo_name = Utils::GetFileName(url);
-		repo_path = fmt::format("./repositories/{}", repo_name);
-		if(repo_name.empty() || repo_path.empty())
+		if(repo_name.empty())
 			return false;
-	}
-	if(repo_name.empty()) {
-		repo_name = Utils::GetFileName(repo_path);
-	}
-	if(repo_path.empty()) {
 		repo_path = fmt::format("./repositories/{}", repo_name);
-	}
-	repo_path = fmt::format("./{}", repo_path);
+	} else if(repo_name.empty())
+		repo_name = Utils::GetFileName(repo_path);
+	else if(repo_path.empty())
+		repo_path = fmt::format("./repositories/{}", repo_name);
+
 	data_path = Utils::NormalizePath(fmt::format("{}/{}/", repo_path, data_path));
+
 	if(lflist_path.size())
 		lflist_path = Utils::NormalizePath(fmt::format("{}/{}/", repo_path, lflist_path));
 	else
 		lflist_path = Utils::NormalizePath(fmt::format("{}/lflists/", repo_path));
+
 	if(script_path.size())
 		script_path = Utils::NormalizePath(fmt::format("{}/{}/", repo_path, script_path));
 	else
 		script_path = Utils::NormalizePath(fmt::format("{}/script/", repo_path));
+
 	if(pics_path.size())
 		pics_path = Utils::NormalizePath(fmt::format("{}/{}/", repo_path, pics_path));
 	else
 		pics_path = Utils::NormalizePath(fmt::format("{}/pics/", repo_path));
+
 	if(has_core || core_path.size()) {
 		has_core = true;
 		core_path = Utils::NormalizePath(fmt::format("{}/{}/", repo_path, core_path));
@@ -117,8 +125,11 @@ std::map<std::string, int> RepoManager::GetRepoStatus() {
 }
 
 #define JSON_SET_IF_VALID(field, jsontype, cpptype) \
-	do { auto it = obj.find(#field); if(it != obj.end() && it->is_##jsontype()) \
-	tmp_repo.field = it->get<cpptype>();} while(0)
+	do { auto it = obj.find(#field); \
+		if(it != obj.end() && it->is_##jsontype()) \
+			tmp_repo.field = it->get<cpptype>(); \
+	} while(0)
+
 void RepoManager::LoadRepositoriesFromJson(const nlohmann::json& configs) {
 	auto cit = configs.find("repos");
 	if(cit != configs.end() && cit->is_array()) {
@@ -180,14 +191,15 @@ void RepoManager::TerminateThreads() {
 
 // private
 
-void RepoManager::AddRepo(GitRepo repo) {
+void RepoManager::AddRepo(GitRepo&& repo) {
 	std::unique_lock<std::mutex> lck(syncing_mutex);
 	if(repos_status.find(repo.repo_path) != repos_status.end())
 		return;
 	repos_status.emplace(repo.repo_path, 0);
-	all_repos.emplace_front(std::move(repo));
-	available_repos.push_back(&all_repos.front());
-	to_sync.push(&all_repos.front());
+	all_repos.push_front(std::move(repo));
+	auto* _repo = &all_repos.front();
+	available_repos.push_back(_repo);
+	to_sync.push(_repo);
 	cv.notify_all();
 }
 
@@ -246,7 +258,7 @@ void RepoManager::CloneOrUpdateTask() {
 			};
 			const std::string& url = _repo.url;
 			const std::string& path = _repo.repo_path;
-			FetchCbPayload payload{ this, path };
+			GitCbPayload payload{ this, path };
 			if(DoesRepoExist(path.data())) {
 				auto repo = Git::MakeUnique(git_repository_open_ext, path.data(),
 											GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
@@ -261,14 +273,18 @@ void RepoManager::CloneOrUpdateTask() {
 						auto remote = Git::MakeUnique(git_remote_lookup, repo.get(), "origin");
 						Git::Check(git_remote_fetch(remote.get(), nullptr, &fetchOpts, nullptr));
 						QueryPartialHistory(repo.get(), walker.get());
+						SetRepoPercentage(path, DELTA_OBJECTS_PERCENTAGE);
 						// git reset --hard FETCH_HEAD
+						git_checkout_options checkoutOpts = GIT_CHECKOUT_OPTIONS_INIT;
+						checkoutOpts.progress_cb = RepoManager::CheckoutCb;
+						checkoutOpts.progress_payload = &payload;
 						git_oid oid;
 						Git::Check(git_reference_name_to_id(&oid, repo.get(), "FETCH_HEAD"));
 						auto commit = Git::MakeUnique(git_commit_lookup, repo.get(), &oid);
 						Git::Check(git_reset(repo.get(), reinterpret_cast<git_object*>(commit.get()),
-											 GIT_RESET_HARD, nullptr));
+											 GIT_RESET_HARD, &checkoutOpts));
 					}
-					catch(std::exception& e) {
+					catch(const std::exception& e) {
 						history.partial_history.clear();
 						history.warning = e.what();
 						ErrorLog(fmt::format("Warning occurred in repo {}: {}", url, e.what()));
@@ -287,6 +303,8 @@ void RepoManager::CloneOrUpdateTask() {
 				git_clone_options cloneOpts = GIT_CLONE_OPTIONS_INIT;
 				cloneOpts.fetch_opts.callbacks.transfer_progress = RepoManager::FetchCb;
 				cloneOpts.fetch_opts.callbacks.payload = &payload;
+				cloneOpts.checkout_opts.progress_cb = RepoManager::CheckoutCb;
+				cloneOpts.checkout_opts.progress_payload = &payload;
 				auto repo = Git::MakeUnique(git_clone, url.data(), path.data(), &cloneOpts);
 				auto walker = Git::MakeUnique(git_revwalk_new, repo.get());
 				git_revwalk_sorting(walker.get(), GIT_SORT_TOPOLOGICAL | GIT_SORT_TIME);
@@ -294,7 +312,7 @@ void RepoManager::CloneOrUpdateTask() {
 			}
 			SetRepoPercentage(path, 100);
 		}
-		catch(std::exception& e) {
+		catch(const std::exception& e) {
 			history.error = e.what();
 			ErrorLog(fmt::format("Exception occurred in repo {}: {}", _repo.url, e.what()));
 		}
@@ -307,15 +325,28 @@ void RepoManager::CloneOrUpdateTask() {
 int RepoManager::FetchCb(const git_indexer_progress* stats, void* payload) {
 	int percent;
 	if(stats->received_objects != stats->total_objects) {
-		percent = (75 * stats->received_objects) / stats->total_objects;
+		percent = (FETCH_OBJECTS_PERCENTAGE * stats->received_objects) / stats->total_objects;
 	} else if(stats->total_deltas == 0) {
-		percent = 75;
+		percent = FETCH_OBJECTS_PERCENTAGE;
 	} else {
-		percent = 75 + ((25 * stats->indexed_deltas) / stats->total_deltas);
+		static constexpr auto DELTA_INCREMENT = DELTA_OBJECTS_PERCENTAGE - FETCH_OBJECTS_PERCENTAGE;
+		percent = FETCH_OBJECTS_PERCENTAGE + ((DELTA_INCREMENT * stats->indexed_deltas) / stats->total_deltas);
 	}
-	auto pl = static_cast<FetchCbPayload*>(payload);
+	auto pl = static_cast<GitCbPayload*>(payload);
 	pl->rm->SetRepoPercentage(pl->path, percent);
 	return pl->rm->fetchReturnValue;
+}
+
+void RepoManager::CheckoutCb(const char* path, size_t completed_steps, size_t total_steps, void* payload) {
+	int percent;
+	if(total_steps == 0)
+		percent = CHECKOUT_PERCENTAGE;
+	else {
+		static constexpr auto DELTA_INCREMENT = CHECKOUT_PERCENTAGE - DELTA_OBJECTS_PERCENTAGE;
+		percent = DELTA_OBJECTS_PERCENTAGE + ((DELTA_INCREMENT * completed_steps) / total_steps);
+	}
+	auto pl = static_cast<GitCbPayload*>(payload);
+	pl->rm->SetRepoPercentage(pl->path, percent);
 }
 
 }

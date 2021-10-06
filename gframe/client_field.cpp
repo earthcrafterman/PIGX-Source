@@ -25,32 +25,27 @@
 namespace ygo {
 
 ClientField::ClientField() {
-	panel = 0;
-	hovered_card = 0;
-	clicked_card = 0;
-	highlighting_card = 0;
+	panel = nullptr;
+	hovered_card = nullptr;
+	clicked_card = nullptr;
+	highlighting_card = nullptr;
 	hovered_controler = 0;
 	hovered_location = 0;
 	hovered_sequence = 0;
 	selectable_field = 0;
 	selected_field = 0;
-	deck_act[0] = false;
-	deck_act[1] = false;
-	grave_act[0] = false;
-	grave_act[1] = false;
-	remove_act[0] = false;
-	remove_act[1] = false;
-	extra_act[0] = false;
-	extra_act[1] = false;
-	pzone_act[0] = false;
-	pzone_act[1] = false;
+	deck_act[0] = deck_act[1] = false;
+	grave_act[0] = grave_act[1] = false;
+	remove_act[0] = remove_act[1] = false;
+	extra_act[0] = extra_act[1] = false;
+	pzone_act[0] = pzone_act[1] = false;
 	conti_act = false;
 	deck_reversed = false;
 	conti_selecting = false;
 	for(int p = 0; p < 2; ++p) {
 		skills[p] = nullptr;
-		mzone[p].resize(7, 0);
-		szone[p].resize(8, 0);
+		mzone[p].resize(7, nullptr);
+		szone[p].resize(8, nullptr);
 	}
 }
 
@@ -63,8 +58,8 @@ void ClientField::Clear() {
 	for(int i = 0; i < 2; ++i) {
 		ClearVector(mzone[i]);
 		ClearVector(szone[i]);
-		mzone[i].resize(7, 0);
-		szone[i].resize(8, 0);
+		mzone[i].resize(7, nullptr);
+		szone[i].resize(8, nullptr);
 		ClearVector(deck[i]);
 		ClearVector(hand[i]);
 		ClearVector(grave[i]);
@@ -104,16 +99,11 @@ void ClientField::Clear() {
 	hovered_sequence = 0;
 	selectable_field = 0;
 	selected_field = 0;
-	deck_act[0] = false;
-	deck_act[1] = false;
-	grave_act[0] = false;
-	grave_act[1] = false;
-	remove_act[0] = false;
-	remove_act[1] = false;
-	extra_act[0] = false;
-	extra_act[1] = false;
-	pzone_act[0] = false;
-	pzone_act[1] = false;
+	deck_act[0] = deck_act[1] = false;
+	grave_act[0] = grave_act[1] = false;
+	remove_act[0] = remove_act[1] = false;
+	extra_act[0] = extra_act[1] = false;
+	pzone_act[0] = pzone_act[1] = false;
 	conti_act = false;
 	deck_reversed = false;
 }
@@ -265,7 +255,7 @@ ClientCard* ClientField::RemoveCard(uint8_t controler, uint8_t location, uint32_
 			deck[controler][i]->curPos.Z -= 0.01f;
 			deck[controler][i]->mTransform.setTranslation(deck[controler][i]->curPos);
 		}
-		deck[controler].erase(deck[controler].end() - 1);
+		deck[controler].pop_back();
 		break;
 	}
 	case LOCATION_HAND: {
@@ -274,7 +264,7 @@ ClientCard* ClientField::RemoveCard(uint8_t controler, uint8_t location, uint32_
 			hand[controler][i] = hand[controler][i + 1];
 			hand[controler][i]->sequence--;
 		}
-		hand[controler].erase(hand[controler].end() - 1);
+		hand[controler].pop_back();
 		break;
 	}
 	case LOCATION_MZONE: {
@@ -295,7 +285,7 @@ ClientCard* ClientField::RemoveCard(uint8_t controler, uint8_t location, uint32_
 			grave[controler][i]->curPos.Z -= 0.01f;
 			grave[controler][i]->mTransform.setTranslation(grave[controler][i]->curPos);
 		}
-		grave[controler].erase(grave[controler].end() - 1);
+		grave[controler].pop_back();
 		break;
 	}
 	case LOCATION_REMOVED: {
@@ -306,7 +296,7 @@ ClientCard* ClientField::RemoveCard(uint8_t controler, uint8_t location, uint32_
 			remove[controler][i]->curPos.Z -= 0.01f;
 			remove[controler][i]->mTransform.setTranslation(remove[controler][i]->curPos);
 		}
-		remove[controler].erase(remove[controler].end() - 1);
+		remove[controler].pop_back();
 		break;
 	}
 	case LOCATION_EXTRA: {
@@ -317,7 +307,7 @@ ClientCard* ClientField::RemoveCard(uint8_t controler, uint8_t location, uint32_
 			extra[controler][i]->curPos.Z -= 0.01f;
 			extra[controler][i]->mTransform.setTranslation(extra[controler][i]->curPos);
 		}
-		extra[controler].erase(extra[controler].end() - 1);
+		extra[controler].pop_back();
 		if (pcard->position & POS_FACEUP)
 			extra_p_count[controler]--;
 		break;
@@ -329,44 +319,38 @@ ClientCard* ClientField::RemoveCard(uint8_t controler, uint8_t location, uint32_
 void ClientField::UpdateCard(uint8_t controler, uint8_t location, uint32_t sequence, char* data, uint32_t len) {
 	ClientCard* pcard = GetCard(controler, location, sequence);
 	if(pcard) {
-		if(mainGame->dInfo.compat_mode) {
+		if(mainGame->dInfo.compat_mode)
 			len = BufferIO::Read<uint32_t>(data);
-		}
-		CoreUtils::Query query(data, mainGame->dInfo.compat_mode, len);
-		pcard->UpdateInfo(query);
+		pcard->UpdateInfo(CoreUtils::Query{ data, mainGame->dInfo.compat_mode, len });
 	}
 }
 void ClientField::UpdateFieldCard(uint8_t controler, uint8_t location, char* data, uint32_t len) {
 	auto lst = GetList(location, controler);
 	if(!lst)
 		return;
-	CoreUtils::QueryStream queries(data, mainGame->dInfo.compat_mode, len);
+	CoreUtils::QueryStream stream{ data, mainGame->dInfo.compat_mode, len };
 	auto cit = lst->begin();
-	for(auto& query : queries.queries) {
+	for(auto& query : stream.GetQueries()) {
 		auto pcard = *cit++;
 		if(pcard)
 			pcard->UpdateInfo(query);
 	}
 }
 void ClientField::ClearCommandFlag() {
-	for(auto& pcard : activatable_cards)  pcard->cmdFlag = 0;
-	for(auto& pcard : summonable_cards)   pcard->cmdFlag = 0;
-	for(auto& pcard : spsummonable_cards) pcard->cmdFlag = 0;
-	for(auto& pcard : msetable_cards)     pcard->cmdFlag = 0;
-	for(auto& pcard : ssetable_cards)     pcard->cmdFlag = 0;
-	for(auto& pcard : reposable_cards)    pcard->cmdFlag = 0;
-	for(auto& pcard : attackable_cards)   pcard->cmdFlag = 0;
+	auto ClearFlag = [](const std::vector<ClientCard*>& map) { for(auto& pcard : map) pcard->cmdFlag = 0; };
+	ClearFlag(activatable_cards);
+	ClearFlag(summonable_cards);
+	ClearFlag(spsummonable_cards);
+	ClearFlag(msetable_cards);
+	ClearFlag(ssetable_cards);
+	ClearFlag(reposable_cards);
+	ClearFlag(attackable_cards);
 	conti_cards.clear();
-	deck_act[0] = false;
-	deck_act[1] = false;
-	grave_act[0] = false;
-	grave_act[1] = false;
-	remove_act[0] = false;
-	remove_act[1] = false;
-	extra_act[0] = false;
-	extra_act[1] = false;
-	pzone_act[0] = false;
-	pzone_act[1] = false;
+	deck_act[0] = deck_act[1] = false;
+	grave_act[0] = grave_act[1] = false;
+	remove_act[0] = remove_act[1] = false;
+	extra_act[0] = extra_act[1] = false;
+	pzone_act[0] = pzone_act[1] = false;
 	conti_act = false;
 }
 void ClientField::ClearSelect() {
@@ -383,16 +367,11 @@ void ClientField::ClearChainSelect() {
 		pcard->is_selected = false;
 	}
 	conti_cards.clear();
-	deck_act[0] = false;
-	deck_act[1] = false;
-	grave_act[0] = false;
-	grave_act[1] = false;
-	remove_act[0] = false;
-	remove_act[1] = false;
-	extra_act[0] = false;
-	extra_act[1] = false;
-	pzone_act[0] = false;
-	pzone_act[1] = false;
+	deck_act[0] = deck_act[1] = false;
+	grave_act[0] = grave_act[1] = false;
+	remove_act[0] = remove_act[1] = false;
+	extra_act[0] = extra_act[1] = false;
+	pzone_act[0] = pzone_act[1] = false;
 	conti_act = false;
 }
 // needs to be synchronized with EGET_SCROLL_BAR_CHANGED
@@ -660,15 +639,15 @@ void ClientField::ShowSelectOption(uint64_t select_hint, bool should_lock) {
 	mainGame->PopupElement(mainGame->wOptions);
 }
 void ClientField::ReplaySwap() {
-	auto reset = [](ClientCard* pcard)->void {
+	auto reset = [](ClientCard* const& pcard)->void {
 		if(pcard) {
 			pcard->controler = 1 - pcard->controler;
 			pcard->UpdateDrawCoordinates(true);
 			pcard->is_moving = false;
 		}
 	};
-	auto resetloc = [&reset](std::vector<ClientCard*> zone)->void {
-		for(auto& pcard : zone)
+	auto resetloc = [&reset](const auto& zone)->void {
+		for(const auto& pcard : zone)
 			reset(pcard);
 	};
 	std::swap(deck[0], deck[1]);
@@ -690,14 +669,14 @@ void ClientField::ReplaySwap() {
 		resetloc(extra[p]);
 		reset(skills[p]);
 	}
-	for(auto& pcard : overlay_cards)
-		reset(pcard);
+	resetloc(overlay_cards);
 	mainGame->dInfo.isFirst = !mainGame->dInfo.isFirst;
 	mainGame->dInfo.isTeam1 = !mainGame->dInfo.isTeam1;
 	mainGame->dInfo.isReplaySwapped = !mainGame->dInfo.isReplaySwapped;
 	std::swap(mainGame->dInfo.lp[0], mainGame->dInfo.lp[1]);
 	std::swap(mainGame->dInfo.strLP[0], mainGame->dInfo.strLP[1]);
 	std::swap(mainGame->dInfo.current_player[0], mainGame->dInfo.current_player[1]);
+	std::swap(player_desc_hints[0], player_desc_hints[1]);
 	for(auto& chit : chains) {
 		chit.controler = 1 - chit.controler;
 		chit.UpdateDrawCoordinates();
@@ -705,14 +684,14 @@ void ClientField::ReplaySwap() {
 	disabled_field = (disabled_field >> 16) | (disabled_field << 16);
 }
 void ClientField::RefreshAllCards() {
-	auto refresh = [](ClientCard* pcard) {
+	auto refresh = [](ClientCard* const& pcard) {
 		if(pcard) {
 			pcard->UpdateDrawCoordinates(true);
 			pcard->is_moving = false;
 		}
 	};
 	auto refreshloc = [&refresh](const auto& zone) {
-		for(auto& pcard : zone)
+		for(const auto& pcard : zone)
 			refresh(pcard);
 	};
 	for(int p = 0; p < 2; ++p) {
@@ -726,6 +705,7 @@ void ClientField::RefreshAllCards() {
 		refresh(skills[p]);
 	}
 	refreshloc(overlay_cards);
+	mainGame->should_refresh_hands = true;
 }
 void ClientField::GetChainDrawCoordinates(uint8_t controler, uint8_t location, uint32_t sequence, irr::core::vector3df* t) {
 	int field = (mainGame->dInfo.duel_field == 3 || mainGame->dInfo.duel_field == 5) ? 0 : 1;
@@ -797,16 +777,15 @@ static void getCardScreenCoordinates(ClientCard* pcard) {
 			dim.Height - irr::core::round32(dim.Height * (transformedPos[1] * zDiv)));
 	};
 
-	const auto& frontmat = matManager.vCardFront;
+	const auto& frontmat = (pcard->code && (!mainGame->dInfo.isReplay || !gGameConfig->hideHandsInReplays || pcard->is_public || pcard->is_hovered)) ? matManager.vCardFront : matManager.vCardBack;
 	const auto upperleft = transform(frontmat[0].Pos);
 	const auto lowerright = transform(frontmat[3].Pos);
 	pcard->hand_collision = { upperleft, lowerright };
 }
 void ClientField::RefreshHandHitboxes() {
-	for(const auto& pcard : hand[0])
-		getCardScreenCoordinates(pcard);
-	for(const auto& pcard : hand[1])
-		getCardScreenCoordinates(pcard);
+	for(const auto& _hand : hand)
+		for(const auto& pcard : _hand)
+			getCardScreenCoordinates(pcard);
 }
 void ClientField::GetCardDrawCoordinates(ClientCard* pcard, irr::core::vector3df* t, irr::core::vector3df* r, bool setTrans) {
 	static const irr::core::vector3df selfATK{ 0.0f, 0.0f, 0.0f };
@@ -828,7 +807,7 @@ void ClientField::GetCardDrawCoordinates(ClientCard* pcard, irr::core::vector3df
 	const int& location = pcard->location;
 	const int field = (mainGame->dInfo.duel_field == 3 || mainGame->dInfo.duel_field == 5) ? 0 : 1;
 	const int speed = (mainGame->dInfo.duel_params & DUEL_3_COLUMNS_FIELD) ? 1 : 0;
-	auto GetPos = [&location,&controler,&speed,&sequence,&field,&pcard]()->const irr::video::S3DVertex* {
+	auto GetPos = [&]()->const irr::video::S3DVertex* {
 		switch(location) {
 		case LOCATION_DECK:		return matManager.vFieldDeck[controler][speed];
 		case LOCATION_MZONE:	return matManager.vFieldMzone[controler][sequence];
@@ -922,7 +901,7 @@ void ClientField::GetCardDrawCoordinates(ClientCard* pcard, irr::core::vector3df
 			getCardScreenCoordinates(pcard);
 	}
 }
-void ClientField::MoveCard(ClientCard * pcard, float frame) {
+void ClientField::MoveCard(ClientCard* pcard, float frame) {
 	float milliseconds = frame * 1000.0f / 60.0f;
 	irr::core::vector3df trans = pcard->curPos;
 	irr::core::vector3df rot = pcard->curRot;
@@ -954,7 +933,7 @@ void ClientField::MoveCard(ClientCard * pcard, float frame) {
 	pcard->refresh_on_stop = true;
 	pcard->aniFrame = milliseconds;
 }
-void ClientField::FadeCard(ClientCard * pcard, float alpha, float frame) {
+void ClientField::FadeCard(ClientCard* pcard, float alpha, float frame) {
 	float milliseconds = frame * 1000.0f / 60.0f;
 	pcard->dAlpha = (alpha - pcard->curAlpha) / milliseconds;
 	pcard->is_fading = true;
@@ -1209,7 +1188,7 @@ bool ClientField::check_sum(std::set<ClientCard*>::const_iterator index, std::se
 								stack.push(cd->val);\
 								break;\
 							}
-static bool is_declarable(CardDataC* cd, const std::vector<uint64_t>& opcodes) {
+static bool is_declarable(const CardDataC* cd, const std::vector<uint64_t>& opcodes) {
 	std::stack<uint64_t> stack;
 	bool alias = false, token = false;
 	for(auto& opcode : opcodes) {
@@ -1278,42 +1257,46 @@ static bool is_declarable(CardDataC* cd, const std::vector<uint64_t>& opcodes) {
 #undef UNARY_OP_OP
 #undef GET_OP
 void ClientField::UpdateDeclarableList(bool refresh) {
-	uint32_t trycode = BufferIO::GetVal(mainGame->ebANCard->getText());
-	auto cd = gDataManager->GetCardData(trycode);
-	if(cd && is_declarable(cd, declare_opcodes)) {
+	CardDataM* cd = nullptr;
+	auto check_code = [&, cards_end = gDataManager->cards.end()](uint32_t trycode) -> bool {
+		const auto it = gDataManager->cards.find(trycode);
+		cd = nullptr;
+		if(it != cards_end && is_declarable(&it->second._data, declare_opcodes))
+			cd = &it->second;
+		return cd;
+	};
+	auto ptext = mainGame->ebANCard->getText();
+	if(check_code(BufferIO::GetVal(ptext))) {
 		mainGame->lstANCard->clear();
-		ancard.clear();
-		mainGame->lstANCard->addItem(gDataManager->GetName(trycode).data());
-		ancard.push_back(trycode);
+		mainGame->lstANCard->addItem(cd->GetStrings()->name.data());
+		ancard = { cd->_data.code };
 		return;
 	}
-	const auto pname = Utils::ToUpperNoAccents<std::wstring>(mainGame->ebANCard->getText());
-	if(pname.empty() && !refresh) {
+	if(ptext[0] == 0 && !refresh) {
 		std::vector<uint32_t> cache;
 		cache.swap(ancard);
 		int sel = mainGame->lstANCard->getSelected();
 		int selcode = (sel == -1) ? 0 : cache[sel];
 		mainGame->lstANCard->clear();
 		for(const auto& trycode : cache) {
-			cd = gDataManager->GetCardData(trycode);
-			if(cd && is_declarable(cd, declare_opcodes)) {
+			if(check_code(trycode)) {
 				ancard.push_back(trycode);
-				auto name = gDataManager->GetName(trycode);
+				const auto& name = cd->GetStrings()->name;
 				mainGame->lstANCard->addItem(name.data());
 				if(trycode == selcode)
 					mainGame->lstANCard->setSelected(name.data());
 			}
 		}
-		if(!ancard.empty())
+		if(ancard.size() > 0)
 			return;
 	}
+	const auto pname = Utils::ToUpperNoAccents<std::wstring>(ptext);
 	mainGame->lstANCard->clear();
 	ancard.clear();
-	for(auto& card : gDataManager->cards) {
-		auto strings = card.second.GetStrings();
-		auto name = Utils::ToUpperNoAccents(strings->name);
-		if(Utils::ContainsSubstring(name, pname)) {
-			//datas.alias can be double card names or alias
+	for(const auto& card : gDataManager->cards) {
+		const auto strings = card.second.GetStrings();
+		const auto& name = strings->uppercase_name;
+		if(name.find(pname) != std::wstring::npos) {
 			if(is_declarable(&card.second._data, declare_opcodes)) {
 				if(pname == name) { //exact match
 					mainGame->lstANCard->insertItem(0, strings->name.data(), -1);

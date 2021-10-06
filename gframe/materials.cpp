@@ -1,4 +1,17 @@
 #include "materials.h"
+#include "custom_skin_enum.h"
+
+/*
+in irrlicht 1.9, ONETEXTURE_BLEND materials are considered as transparent
+where in 1.8.4 they're not and since they're considered transparent, the depth
+buffer is ignored when drawing them, thus causing xyz materials to be drawn
+in the wrong order
+*/
+#if (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+#define ENABLE_ZWRITE(mat) do {mat.ZWriteEnable = irr::video::EZW_ON; } while(0)
+#else
+#define ENABLE_ZWRITE(mat) (void)0
+#endif
 
 namespace ygo {
 
@@ -308,6 +321,7 @@ Materials::Materials() {
 	mCard.ColorMaterial = irr::video::ECM_NONE;
 	mCard.MaterialType = irr::video::EMT_ONETEXTURE_BLEND;
 	mCard.MaterialTypeParam = pack_textureBlendFunc(irr::video::EBF_SRC_ALPHA, irr::video::EBF_ONE_MINUS_SRC_ALPHA, irr::video::EMFN_MODULATE_1X, irr::video::EAS_VERTEX_COLOR);
+	ENABLE_ZWRITE(mCard);
 	mTexture.AmbientColor = 0xffffffff;
 	mTexture.DiffuseColor = 0xff000000;
 	mTexture.ColorMaterial = irr::video::ECM_NONE;
@@ -319,21 +333,25 @@ Materials::Materials() {
 	mBackLine.MaterialType = irr::video::EMT_ONETEXTURE_BLEND;
 	mBackLine.MaterialTypeParam = pack_textureBlendFunc(irr::video::EBF_SRC_ALPHA, irr::video::EBF_ONE_MINUS_SRC_ALPHA, irr::video::EMFN_MODULATE_1X, irr::video::EAS_VERTEX_COLOR);
 	mBackLine.Thickness = 2;
+	ENABLE_ZWRITE(mBackLine);
 	mSelField.ColorMaterial = irr::video::ECM_NONE;
 	mSelField.AmbientColor = 0xffffffff;
 	mSelField.DiffuseColor = 0xff000000;
 	mSelField.MaterialType = irr::video::EMT_ONETEXTURE_BLEND;
 	mSelField.MaterialTypeParam = pack_textureBlendFunc(irr::video::EBF_SRC_ALPHA, irr::video::EBF_ONE_MINUS_SRC_ALPHA, irr::video::EMFN_MODULATE_1X, irr::video::EAS_VERTEX_COLOR);
+	ENABLE_ZWRITE(mSelField);
 	mLinkedField.ColorMaterial = irr::video::ECM_NONE;
 	mLinkedField.AmbientColor = 0xffffffff;
 	mLinkedField.DiffuseColor = 0xff000000;
 	mLinkedField.MaterialType = irr::video::EMT_ONETEXTURE_BLEND;
 	mLinkedField.MaterialTypeParam = pack_textureBlendFunc(irr::video::EBF_SRC_ALPHA, irr::video::EBF_ONE_MINUS_SRC_ALPHA, irr::video::EMFN_MODULATE_1X, irr::video::EAS_VERTEX_COLOR);
+	ENABLE_ZWRITE(mLinkedField);
 	mMutualLinkedField.ColorMaterial = irr::video::ECM_NONE;
 	mMutualLinkedField.AmbientColor = 0xffffffff;
 	mMutualLinkedField.DiffuseColor = 0xff000000;
 	mMutualLinkedField.MaterialType = irr::video::EMT_ONETEXTURE_BLEND;
 	mMutualLinkedField.MaterialTypeParam = pack_textureBlendFunc(irr::video::EBF_SRC_ALPHA, irr::video::EBF_ONE_MINUS_SRC_ALPHA, irr::video::EMFN_MODULATE_1X, irr::video::EAS_VERTEX_COLOR);
+	ENABLE_ZWRITE(mMutualLinkedField);
 	mOutLine.ColorMaterial = irr::video::ECM_AMBIENT;
 	mOutLine.DiffuseColor = 0xff000000;
 	mOutLine.Thickness = 2;
@@ -344,11 +362,12 @@ Materials::Materials() {
 	mATK.setFlag(irr::video::EMF_BACK_FACE_CULLING, 0);
 	mATK.MaterialType = irr::video::EMT_ONETEXTURE_BLEND;
 	mATK.MaterialTypeParam = pack_textureBlendFunc(irr::video::EBF_SRC_ALPHA, irr::video::EBF_ONE_MINUS_SRC_ALPHA, irr::video::EMFN_MODULATE_1X, irr::video::EAS_VERTEX_COLOR);
+	ENABLE_ZWRITE(mATK);
 }
 void Materials::GenArrow(float y) {
 	float ay = 1.0f;
 	for (int i = 0; i < 19; ++i) {
-		vArrow[i * 2] = vArrow[i * 2 + 1] = irr::video::S3DVertex(irr::core::vector3df(0.1f, ay * y, -2.0f * (ay * ay - 1.0f)), irr::core::vector3df(0, ay * y, 1), 0xc000ff00, irr::core::vector2df(0, 0));
+		vArrow[i * 2] = vArrow[i * 2 + 1] = irr::video::S3DVertex(irr::core::vector3df(0.1f, ay * y, -2.0f * (ay * ay - 1.0f)), irr::core::vector3df(0, ay * y, 1), skin::DUELFIELD_ATTACK_ARROW_VAL, irr::core::vector2df(0, 0));
 		vArrow[i * 2 + 1].Pos.X = -0.1f;
 		ay -= 0.1f;
 	}

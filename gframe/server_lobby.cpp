@@ -65,11 +65,10 @@ void ServerLobby::FillOnlineRooms() {
 		}
 		if(doFilter) {
 			if(searchText.size()) {
-				bool res = Utils::ContainsSubstring(room.description, searchText, true);
-				for(auto& name : room.players) {
-					res = res || Utils::ContainsSubstring(name, searchText, true);
-				}
-				if(!res)
+				auto res = Utils::ToUpperNoAccents(room.description).find(searchText);
+				for(auto it = room.players.cbegin(); res == std::wstring::npos && it != room.players.cend(); it++)
+					res = Utils::ToUpperNoAccents(*it).find(searchText);
+				if(res == std::wstring::npos)
 					continue;
 			}
 			if(bestOf && room.info.best_of != bestOf)
@@ -91,7 +90,8 @@ void ServerLobby::FillOnlineRooms() {
 			if(mainGame->btnFilterRelayMode->isPressed() && !(room.info.duel_flag_low & DUEL_RELAY))
 				continue;
 		}
-		std::wstring banlist;
+
+		epro::wstringview banlist = L"???";
 
 		for(auto& list : gdeckManager->_lfList) {
 			if(list.hash == room.info.lflist) {
@@ -112,7 +112,7 @@ void ServerLobby::FillOnlineRooms() {
 			(room.info.duel_flag_low & DUEL_RELAY) ? L" (Relay)" : L"").data());
 		int rule;
 		auto duel_flag = (((uint64_t)room.info.duel_flag_low) | ((uint64_t)room.info.duel_flag_high) << 32);
-		mainGame->GetMasterRule(duel_flag & ~(DUEL_RELAY | DUEL_TCG_SEGOC_NONPUBLIC), room.info.forbiddentypes, &rule);
+		mainGame->GetMasterRule(duel_flag & ~(DUEL_RELAY | DUEL_TCG_SEGOC_NONPUBLIC | DUEL_PSEUDO_SHUFFLE), room.info.forbiddentypes, &rule);
 		if(rule == 6) {
 			if(duel_flag == DUEL_MODE_GOAT) {
 				roomListTable->setCellText(index, 3, "GOAT");
@@ -126,13 +126,12 @@ void ServerLobby::FillOnlineRooms() {
 			roomListTable->setCellText(index, 3, fmt::format(L"{}MR {}", 
 															 (duel_flag & DUEL_TCG_SEGOC_NONPUBLIC) ? L"TCG " : L"",
 															 (rule == 0) ? 3 : rule).data());
-		roomListTable->setCellText(index, 4, (banlist.size()) ? banlist.data() : L"???");
+		roomListTable->setCellText(index, 4, banlist.data());
 		std::wstring players;
-		for(auto& player : room.players) {
+		for(const auto& player : room.players)
 			players.append(player).append(L", ");
-		}
 		if(players.size())
-			players.resize(players.size() - 2);
+			players.erase(players.size() - 2);
 		roomListTable->setCellText(index, 5, players.data());
 		roomListTable->setCellText(index, 6, room.description.data());
 		roomListTable->setCellText(index, 7, room.started ? gDataManager->GetSysString(1986).data() : gDataManager->GetSysString(1987).data());
@@ -171,17 +170,19 @@ void ServerLobby::GetRoomsThread() {
 	if (selected < 0) return;
 	ServerInfo serverInfo = serversVector[selected];
 
-	GUIUtils::ChangeCursor(mainGame->device, irr::gui::ECI_WAIT);
 	mainGame->btnLanRefresh2->setEnabled(false);
 	mainGame->serverChoice->setEnabled(false);
 	mainGame->roomListTable->setVisible(false);
 
 	std::string retrieved_data;
+	char curl_error_buffer[CURL_ERROR_SIZE];
 	CURL* curl_handle = curl_easy_init();
+	curl_easy_setopt(curl_handle, CURLOPT_ERRORBUFFER, curl_error_buffer);
+	curl_easy_setopt(curl_handle, CURLOPT_FAILONERROR, 1);
 	//if(mainGame->chkShowActiveRooms->isChecked()) {
-		curl_easy_setopt(curl_handle, CURLOPT_URL, fmt::format("http://{}:{}/api/getrooms", BufferIO::EncodeUTF8s(serverInfo.roomaddress), serverInfo.roomlistport).data());
+		curl_easy_setopt(curl_handle, CURLOPT_URL, fmt::format("http://{}:{}/api/getrooms", serverInfo.roomaddress, serverInfo.roomlistport).data());
 	/*} else {
-		curl_easy_setopt(curl_handle, CURLOPT_URL, fmt::format("http://{}:{}/api/getrooms", BufferIO::EncodeUTF8s(serverInfo.roomaddress), serverInfo.roomlistport).data());
+		curl_easy_setopt(curl_handle, CURLOPT_URL, fmt::format("http://{}:{}/api/getrooms", serverInfo.roomaddress, serverInfo.roomlistport).data());
 	}*/
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 7L);
@@ -201,13 +202,16 @@ void ServerLobby::GetRoomsThread() {
 	const auto res = curl_easy_perform(curl_handle);
 	curl_easy_cleanup(curl_handle);
 	if(res != CURLE_OK) {
+		if(gGameConfig->logDownloadErrors)
+			ErrorLog("Error updating the room list:");
+			ErrorLog(fmt::format("Curl error: ({}) {} ({})", res, curl_easy_strerror(res), curl_error_buffer));
 		//error
 		mainGame->PopupMessage(gDataManager->GetSysString(2037));
-		GUIUtils::ChangeCursor(mainGame->device, irr::gui::ECI_NORMAL);
 		mainGame->btnLanRefresh2->setEnabled(true);
 		mainGame->serverChoice->setEnabled(true);
 		mainGame->roomListTable->setVisible(true);
 		is_refreshing = false;
+		has_refreshed = true;
 		return;
 	}
 
@@ -222,8 +226,8 @@ void ServerLobby::GetRoomsThread() {
 				for (auto& obj : j["rooms"]) {
 					RoomInfo room;
 					room.id = GET("roomid", int);
-					room.name = BufferIO::DecodeUTF8s(obj["roomname"].get_ref<std::string&>());
-					room.description = BufferIO::DecodeUTF8s(obj["roomnotes"].get_ref<std::string&>());
+					room.name = BufferIO::DecodeUTF8(obj["roomname"].get_ref<std::string&>());
+					room.description = BufferIO::DecodeUTF8(obj["roomnotes"].get_ref<std::string&>());
 					room.locked = GET("needpass", bool);
 					room.started = obj["istart"].get_ref<std::string&>() == "start";
 					room.info.mode = GET("roommode", int);
@@ -241,11 +245,11 @@ void ServerLobby::GetRoomsThread() {
 					room.info.time_limit = GET("time_limit", int);
 					room.info.rule = GET("rule", int);
 					room.info.no_check_deck = GET("no_check", bool);
-					room.info.no_shuffle_deck = GET("no_shuffle", bool);
+					room.info.no_shuffle_deck = GET("no_shuffle", bool) || (flag & DUEL_PSEUDO_SHUFFLE);
 					room.info.lflist = GET("banlist_hash", int);
 #undef GET
 					for (auto& obj2 : obj["users"])
-						room.players.push_back(BufferIO::DecodeUTF8s(obj2["name"].get_ref<std::string&>()));
+						room.players.push_back(BufferIO::DecodeUTF8(obj2["name"].get_ref<std::string&>()));
 
 					roomsVector.push_back(std::move(room));
 				}
@@ -263,6 +267,7 @@ void ServerLobby::RefreshRooms() {
 		return;
 	is_refreshing = true;
 	mainGame->roomListTable->clearRows();
+	GUIUtils::ChangeCursor(mainGame->device, irr::gui::ECI_WAIT);
 	std::thread(GetRoomsThread).detach();
 }
 bool ServerLobby::HasRefreshedRooms() {
@@ -277,7 +282,10 @@ void ServerLobby::JoinServer(bool host) {
 		const ServerInfo& server = serversVector[selected];
 		serverinfo = DuelClient::ResolveServer(server.address, server.duelport);
 	}
-	catch(std::exception& e) { ErrorLog(fmt::format("Exception occurred: {}", e.what())); }
+	catch(const std::exception& e) {
+		ErrorLog(fmt::format("Exception occurred: {}", e.what()));
+		return;
+	}
 	if(host) {
 		if(!DuelClient::StartClient(serverinfo.first, serverinfo.second))
 			return;
@@ -295,7 +303,7 @@ void ServerLobby::JoinServer(bool host) {
 			if(*text == L'\0')
 				return;
 			mainGame->wRoomPassword->setVisible(false);
-			mainGame->dInfo.secret.pass = BufferIO::EncodeUTF8s(text);
+			mainGame->dInfo.secret.pass = text;
 		} else
 			mainGame->dInfo.secret.pass.clear();
 		if(!DuelClient::StartClient(serverinfo.first, serverinfo.second, room->id, false))

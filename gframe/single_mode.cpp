@@ -26,10 +26,10 @@ Replay SingleMode::new_replay;
 ReplayStream SingleMode::replay_stream;
 Signal SingleMode::singleSignal;
 
-bool SingleMode::StartPlay(const DuelOptions& duelOptions) {
+bool SingleMode::StartPlay(DuelOptions&& duelOptions) {
 	if(mainGame->dInfo.isSingleMode)
 		return false;
-	std::thread(SinglePlayThread, duelOptions).detach();
+	std::thread(SinglePlayThread, std::move(duelOptions)).detach();
 	return true;
 }
 void SingleMode::StopPlay(bool is_exiting) {
@@ -53,16 +53,16 @@ void SingleMode::SetResponse(void* resp, uint32_t len) {
 	last_replay.WriteData(resp, len);
 	OCG_DuelSetResponse(pduel, resp, len);
 }
-int SingleMode::SinglePlayThread(DuelOptions duelOptions) {
+int SingleMode::SinglePlayThread(DuelOptions&& duelOptions) {
 	Utils::SetThreadName("SinglePlay");
 	uint64_t opt = duelOptions.duelFlags;
 	std::string script_name = "";
 	auto InitReplay = [&]() {
 		uint16_t buffer[20];
-		BufferIO::CopyWStr(mainGame->dInfo.selfnames[0].data(), buffer, 20);
+		BufferIO::EncodeUTF16(mainGame->dInfo.selfnames[0].data(), buffer, 20);
 		last_replay.WriteData(buffer, 40, false);
 		new_replay.WriteData(buffer, 40, false);
-		BufferIO::CopyWStr(mainGame->dInfo.opponames[0].data(), buffer, 20);
+		BufferIO::EncodeUTF16(mainGame->dInfo.opponames[0].data(), buffer, 20);
 		last_replay.WriteData(buffer, 40, false);
 		new_replay.WriteData(buffer, 40, false);
 		last_replay.Write<uint32_t>(duelOptions.startingLP, false);
@@ -82,7 +82,7 @@ restart:
 	DuelClient::rnd.seed(seed);
 	mainGame->dInfo.isSingleMode = true;
 	OCG_Player team = { duelOptions.startingLP, duelOptions.startingDrawCount, duelOptions.drawCountPerTurn };
-	bool hand_test = mainGame->dInfo.isHandTest = open_file && open_file_name == EPRO_TEXT("hand-test-mode");
+	bool hand_test = mainGame->dInfo.isHandTest = (duelOptions.scriptName == "hand-test-mode");
 	if(hand_test)
 		opt |= DUEL_ATTACK_FIRST_TURN;
 	pduel = mainGame->SetupDuel({ DuelClient::rnd(), opt, team, team });
@@ -115,9 +115,8 @@ restart:
 		script_name = "hand-test-mode";
 		InitReplay();
 		Deck playerdeck(gdeckManager->current_deck);
-		if (!duelOptions.handTestNoShuffle) {
+		if ((duelOptions.duelFlags & DUEL_PSEUDO_SHUFFLE) == 0)
 			std::shuffle(playerdeck.main.begin(), playerdeck.main.end(), DuelClient::rnd);
-		}
 		auto LoadDeck = [&](uint8_t team) {
 			OCG_NewCardInfo card_info = { team, 0, 0, team, 0, 0, POS_FACEDOWN_DEFENSE };
 			card_info.loc = LOCATION_DECK;
@@ -149,11 +148,11 @@ restart:
 		if(open_file) {
 			script_name = Utils::ToUTF8IfNeeded(open_file_name);
 			if(!mainGame->LoadScript(pduel, script_name)) {
-				script_name = Utils::ToUTF8IfNeeded(EPRO_TEXT("./puzzles/") + open_file_name);
+				script_name = fmt::format("./puzzles/{}" ,script_name);
 				loaded = mainGame->LoadScript(pduel, script_name);
 			}
 		} else {
-			script_name = BufferIO::EncodeUTF8s(mainGame->lstSinglePlayList->getListItem(mainGame->lstSinglePlayList->getSelected(), true));
+			script_name = duelOptions.scriptName;
 			loaded = mainGame->LoadScript(pduel, script_name);
 		}
 		InitReplay();
@@ -266,12 +265,10 @@ restart:
 	if(saveReplay && !was_restarting) {
 		auto now = std::time(nullptr);
 		std::unique_lock<std::mutex> lock(mainGame->gMutex);
-		mainGame->ebRSName->setText(fmt::format(L"{:%Y-%m-%d %H-%M-%S}", *std::localtime(&now)).data());
-		mainGame->wReplaySave->setText(gDataManager->GetSysString(1340).data());
-		mainGame->PopupElement(mainGame->wReplaySave);
+		mainGame->PopupSaveWindow(gDataManager->GetSysString(1340), fmt::format(L"{:%Y-%m-%d %H-%M-%S}", *std::localtime(&now)), gDataManager->GetSysString(1342));
 		mainGame->replaySignal.Wait(lock);
 		if(mainGame->saveReplay)
-			new_replay.SaveReplay(Utils::ToPathString(mainGame->ebRSName->getText()));
+			new_replay.SaveReplay(Utils::ToPathString(mainGame->ebFileSaveName->getText()));
 	}
 	new_replay.Reset();
 	last_replay.Reset();
@@ -377,10 +374,10 @@ bool SingleMode::SinglePlayAnalyze(CoreUtils::Packet packet) {
 				break;
 			pbuf[len] = 0;
 			if(packet.message == MSG_AI_NAME) {
-				mainGame->dInfo.opponames[0] = BufferIO::DecodeUTF8s(pbuf);
+				mainGame->dInfo.opponames[0] = BufferIO::DecodeUTF8(pbuf);
 			} else {
 				std::unique_lock<std::mutex> lock(mainGame->gMutex);
-				mainGame->stMessage->setText(BufferIO::DecodeUTF8s(pbuf).data());
+				mainGame->stMessage->setText(BufferIO::DecodeUTF8(pbuf).data());
 				mainGame->PopupElement(mainGame->wMessage);
 				mainGame->actionSignal.Wait(lock);
 			}

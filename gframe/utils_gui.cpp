@@ -3,6 +3,7 @@
 #include <ICursorControl.h>
 #include <fmt/chrono.h>
 #include <fmt/format.h>
+#include "config.h"
 #include "utils.h"
 #include "game_config.h"
 #include "text_types.h"
@@ -12,39 +13,116 @@
 #include <vector>
 #include "logging.h"
 #include "Base64.h"
+#if IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9
+#include "IrrlichtCommonIncludes1.9/CCursorControl.h"
+using CCursorControl = irr::CIrrDeviceWin32::CCursorControl;
+#else
 #include "IrrlichtCommonIncludes/CCursorControl.h"
+using CCursorControl = irr::CCursorControl;
+#endif
 #elif defined(__ANDROID__)
-class android_app;
-namespace porting {
-extern android_app* app_global;
-}
+#include "Android/porting_android.h"
+#elif defined(EDOPRO_MACOS)
+#import <CoreFoundation/CoreFoundation.h>
+#include "osx_menu.h"
 #elif defined(__linux__)
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
-#elif defined(__APPLE__)
-#import <CoreFoundation/CoreFoundation.h>
-#include "osx_menu.h"
+#include <unistd.h>
+#include <sys/wait.h>
+#include <dlfcn.h>
+#include <memory>
+namespace {
+using Bool_v = int;
+using Atom_v = unsigned long;
+using Display_v = void;
+using Window_v = unsigned long;
+using Status_v = int;
+using XEvent_v = void;
+struct X11Helper {
+	X11Helper();
+	~X11Helper();
+	void* LibX11{ nullptr };
+	Display_v* (*XOpenDisplay)(const char*) { nullptr };
+	int (*XGetInputFocus)(Display_v*, Window_v*, int*) { nullptr };
+	Atom_v(*XInternAtom)(Display_v*, const char*, Bool_v) { nullptr };
+	int (*XGetWindowProperty)(Display_v*, Window_v, Atom_v, long, long, Bool_v, Atom_v, Atom_v*, int*, unsigned long*, unsigned long*, unsigned char**) { nullptr };
+	int (*XFree)(void*) { nullptr };
+	Status_v(*XSendEvent)(Display_v*, Window_v, Bool_v, long, XEvent_v*) { nullptr };
+	int (*XChangeProperty)(Display_v*, Window_v, Atom_v, Atom_v, int, int, const unsigned char*, int) { nullptr };
+	int (*XMapWindow)(Display_v*, Window_v) { nullptr };
+	int (*XFlush)(Display_v*) { nullptr };
+};
+}
+
+static std::unique_ptr<X11Helper> X11{ nullptr };
 #endif
 
 namespace ygo {
 
-irr::IrrlichtDevice* GUIUtils::CreateDevice(GameConfig* configs) {
-	irr::SIrrlichtCreationParameters params = irr::SIrrlichtCreationParameters();
-	params.AntiAlias = configs->antialias;
-#ifndef __ANDROID__
-#ifdef _IRR_COMPILE_WITH_DIRECT3D_9_
-	if(configs->use_d3d)
-		params.DriverType = irr::video::EDT_DIRECT3D9;
-	else
+#ifdef _WIN32
+static HWND GetWindowHandle(irr::video::IVideoDriver* driver) {
+	switch(driver->getDriverType()) {
+#if !(IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+	case irr::video::EDT_DIRECT3D8:
+		return static_cast<HWND>(driver->getExposedVideoData().D3D8.HWnd);
 #endif
-		params.DriverType = irr::video::EDT_OPENGL;
-	params.WindowSize = irr::core::dimension2d<irr::u32>((irr::u32)(1024 * configs->dpi_scale), (irr::u32)(640 * configs->dpi_scale));
+	case irr::video::EDT_DIRECT3D9:
+		return static_cast<HWND>(driver->getExposedVideoData().D3D9.HWnd);
+	case irr::video::EDT_OPENGL:
+#if (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+	case irr::video::EDT_OGLES1:
+	case irr::video::EDT_OGLES2:
+#endif
+		return static_cast<HWND>(driver->getExposedVideoData().OpenGLWin32.HWnd);
+	default:
+		break;
+	}
+	return nullptr;
+}
+#endif
+
+static inline irr::video::E_DRIVER_TYPE getDefaultDriver(irr::E_DEVICE_TYPE device_type) {
+	(void)device_type;
+#ifdef _WIN32
+	return irr::video::EDT_DIRECT3D9;
+#elif defined(__ANDROID__)
+	return irr::video::EDT_OGLES2;
+#elif defined(__linux__)
+#if (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+	if(device_type == irr::E_DEVICE_TYPE::EIDT_WAYLAND)
+		return irr::video::EDT_OGLES2;
+#endif
+	return irr::video::EDT_OPENGL;
+#elif defined(EDOPRO_MACOS)
+	return irr::video::EDT_OPENGL;
+#endif
+}
+
+irr::IrrlichtDevice* GUIUtils::CreateDevice(GameConfig* configs) {
+	irr::SIrrlichtCreationParameters params{};
+	params.AntiAlias = configs->antialias;
+#if defined(__linux__) && !defined(__ANDROID__) && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+	if(configs->useWayland == 1) {
+		params.DeviceType = irr::E_DEVICE_TYPE::EIDT_WAYLAND;
+		fmt::print("You're using the wayland device backend.\nKeep in mind that it's still experimental and might be unstable.\n"
+				   "If you are getting any major issues, or the game doesn't start,\n"
+				   "you can manually disable this option from the system.conf file by toggling the useWayland option.\n"
+				   "Feel free to report any issues you encounter.\n");
+	}
+#endif
 	params.Vsync = configs->vsync;
-#else
-	if(gGameConfig->use_d3d)
-		params.DriverType = irr::video::EDT_OGLES2;
+	if(configs->driver_type == irr::video::EDT_COUNT)
+		params.DriverType = getDefaultDriver(params.DeviceType);
 	else
-		params.DriverType = irr::video::EDT_OGLES1;
+		params.DriverType = configs->driver_type;
+#if (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+	params.OGLES2ShaderPath = EPRO_TEXT("BUNDLED");
+	params.WindowResizable = true;
+#endif
+#ifndef __ANDROID__
+	params.WindowSize = irr::core::dimension2d<irr::u32>((irr::u32)(1024 * configs->dpi_scale), (irr::u32)(640 * configs->dpi_scale));
+#else
 	params.PrivateData = porting::app_global;
 	params.Bits = 24;
 	params.ZBufferBits = 16;
@@ -76,21 +154,32 @@ irr::IrrlichtDevice* GUIUtils::CreateDevice(GameConfig* configs) {
 	driver->setTextureCreationFlag(irr::video::ETCF_CREATE_MIP_MAPS, false);
 	driver->setTextureCreationFlag(irr::video::ETCF_OPTIMIZED_FOR_QUALITY, true);
 	device->setWindowCaption(L"Project Ignis: EDOPro");
+#if !(IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
 	device->setResizable(true);
+#endif
 #ifdef _WIN32
-	HINSTANCE hInstance = (HINSTANCE)GetModuleHandle(NULL);
-	HICON hSmallIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(1), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-	HICON hBigIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(1), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
-	HWND hWnd = reinterpret_cast<HWND>(driver->getExposedVideoData().D3D9.HWnd);
-	SendMessage(hWnd, WM_SETICON, ICON_SMALL, (long)hSmallIcon);
-	SendMessage(hWnd, WM_SETICON, ICON_BIG, (long)hBigIcon);
+	auto hInstance = static_cast<HINSTANCE>(GetModuleHandle(nullptr));
+	auto hSmallIcon = static_cast<HICON>(LoadImage(hInstance, MAKEINTRESOURCE(1), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
+	auto hBigIcon = static_cast<HICON>(LoadImage(hInstance, MAKEINTRESOURCE(1), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR));
+	auto hWnd = GetWindowHandle(driver);
+	SendMessage(hWnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hSmallIcon));
+	SendMessage(hWnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(hBigIcon));
 	if(gGameConfig->windowStruct.size()) {
 		auto winstruct = base64_decode(gGameConfig->windowStruct);
 		if(winstruct.size() == sizeof(WINDOWPLACEMENT))
-			SetWindowPlacement(hWnd, (WINDOWPLACEMENT*)winstruct.data());
+			SetWindowPlacement(hWnd, reinterpret_cast<WINDOWPLACEMENT*>(winstruct.data()));
 	}
+#elif defined(EDOPRO_MACOS)
+	if(gGameConfig->windowStruct.size())
+		EDOPRO_SetWindowRect(driver->getExposedVideoData().OpenGLOSX.Window, gGameConfig->windowStruct.data());
 #endif
 	device->getLogger()->setLogLevel(irr::ELL_ERROR);
+#if defined(__linux__) && !defined(__ANDROID__)
+#if (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+	if(params.DeviceType != irr::E_DEVICE_TYPE::EIDT_WAYLAND)
+#endif
+		X11 = std::make_unique<X11Helper>();
+#endif
 	return device;
 }
 
@@ -104,14 +193,13 @@ void GUIUtils::ChangeCursor(irr::IrrlichtDevice* device, /*irr::gui::ECURSOR_ICO
 #endif
 }
 
-bool GUIUtils::TakeScreenshot(irr::IrrlichtDevice* device)
-{
+bool GUIUtils::TakeScreenshot(irr::IrrlichtDevice* device) {
 	const auto driver = device->getVideoDriver();
 	const auto image = driver->createScreenShot();
-	if (!image)
+	if(!image)
 		return false;
-	auto now = std::time(nullptr);
-	epro::path_string filename = fmt::format(EPRO_TEXT("screenshots/EDOPro {:%Y-%m-%d %H-%M-%S}.png"), *std::localtime(&now));
+	const auto now = std::time(nullptr);
+	const auto filename = fmt::format(EPRO_TEXT("screenshots/EDOPro {:%Y-%m-%d %H-%M-%S}.png"), *std::localtime(&now));
 	auto written = driver->writeImageToFile(image, { filename.data(), static_cast<irr::u32>(filename.size()) });
 	if(!written)
 		device->getLogger()->log(L"Failed to take screenshot.", irr::ELL_WARNING);
@@ -119,23 +207,29 @@ bool GUIUtils::TakeScreenshot(irr::IrrlichtDevice* device)
 	return written;
 }
 
+#ifdef _WIN32
+//gcc on mingw can't convert lambda to __stdcall function
+static BOOL CALLBACK callback(HMONITOR hMon, HDC hdc, LPRECT lprcMonitor, LPARAM pData) {
+	auto monitors = reinterpret_cast<std::vector<RECT>*>(pData);
+	monitors->push_back(*lprcMonitor);
+	return TRUE;
+}
+#endif
+
 void GUIUtils::ToggleFullscreen(irr::IrrlichtDevice* device, bool& fullscreen) {
+	(void)fullscreen;
 #ifdef _WIN32
 	static WINDOWPLACEMENT nonFullscreenSize;
 	static LONG_PTR nonFullscreenStyle;
 	static constexpr LONG_PTR fullscreenStyle = WS_POPUP | WS_SYSMENU | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
 	static const auto monitors = [] {
 		std::vector<RECT> ret;
-		EnumDisplayMonitors(0, 0, [](HMONITOR hMon, HDC hdc, LPRECT lprcMonitor, LPARAM pData) -> BOOL {
-			auto monitors = reinterpret_cast<std::vector<RECT>*>(pData);
-			monitors->push_back(*lprcMonitor);
-			return TRUE;
-		}, (LPARAM)&ret);
+		EnumDisplayMonitors(0, 0, callback, reinterpret_cast<LPARAM>(&ret));
 		return ret;
 	}();
 	fullscreen = !fullscreen;
 	const auto driver = device->getVideoDriver();
-	HWND hWnd = reinterpret_cast<HWND>(driver->getExposedVideoData().D3D9.HWnd);
+	auto hWnd = GetWindowHandle(driver);
 	if(fullscreen) {
 		GetWindowPlacement(hWnd, &nonFullscreenSize);
 		nonFullscreenStyle = GetWindowLongPtr(hWnd, GWL_STYLE);
@@ -160,8 +254,10 @@ void GUIUtils::ToggleFullscreen(irr::IrrlichtDevice* device, bool& fullscreen) {
 		SetWindowLongPtr(hWnd, GWL_STYLE, nonFullscreenStyle);
 		SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 	}
-	static_cast<irr::CCursorControl*>(device->getCursorControl())->updateBorderSize(fullscreen, true);
+	static_cast<CCursorControl*>(device->getCursorControl())->updateBorderSize(fullscreen, true);
 #elif defined(__linux__) && !defined(__ANDROID__)
+	if(!X11 || !X11->LibX11)
+		return;
 	struct {
 		unsigned long   flags;
 		unsigned long   functions;
@@ -169,36 +265,38 @@ void GUIUtils::ToggleFullscreen(irr::IrrlichtDevice* device, bool& fullscreen) {
 		long			inputMode;
 		unsigned long   status;
 	} hints{};
-	Display* display = XOpenDisplay(NULL);;
+	auto display = X11->XOpenDisplay(nullptr);
 	Window window;
 	static bool wasHorizontalMaximized = false, wasVerticalMaximized = false;
 	int revert;
 	fullscreen = !fullscreen;
-	XGetInputFocus(display, &window, &revert);
+	X11->XGetInputFocus(display, &window, &revert);
 
-	Atom wm_state = XInternAtom(display, "_NET_WM_STATE", false);
-	Atom max_horz = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", false);
-	Atom max_vert = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", false);
+	Atom wm_state = X11->XInternAtom(display, "_NET_WM_STATE", false);
+	Atom max_horz = X11->XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", false);
+	Atom max_vert = X11->XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", false);
 
 	auto checkMaximized = [&]() {
-		long maxLength = 1024;
+		const long maxLength = 1024;
 		Atom actualType;
 		int actualFormat;
-		unsigned long i, numItems, bytesAfter;
-		unsigned char *propertyValue = NULL;
-		if(XGetWindowProperty(display, window, wm_state,
+		unsigned long numItems, bytesAfter;
+		unsigned char* propertyValue = nullptr;
+		wasVerticalMaximized = false;
+		wasHorizontalMaximized = false;
+		if(X11->XGetWindowProperty(display, window, wm_state,
 							  0l, maxLength, false, XA_ATOM, &actualType,
 							  &actualFormat, &numItems, &bytesAfter,
 							  &propertyValue) == Success) {
-			Atom* atoms = (Atom *)propertyValue;
-			for(i = 0; i < numItems; ++i) {
+			Atom* atoms = (Atom*)propertyValue;
+			for(unsigned long i = 0; i < numItems; ++i) {
 				if(atoms[i] == max_vert) {
 					wasVerticalMaximized = true;
 				} else if(atoms[i] == max_horz) {
 					wasHorizontalMaximized = true;
 				}
 			}
-			XFree(propertyValue);
+			X11->XFree(propertyValue);
 		}
 	};
 	if(fullscreen)
@@ -217,17 +315,16 @@ void GUIUtils::ToggleFullscreen(irr::IrrlichtDevice* device, bool& fullscreen) {
 			xev.xclient.data.l[i++] = max_vert;
 		if(i == 2)
 			xev.xclient.data.l[i] = 0;
-		XSendEvent(display, DefaultRootWindow(display), False, SubstructureNotifyMask, &xev);
+		X11->XSendEvent(display, DefaultRootWindow(display), False, SubstructureNotifyMask, &xev);
 	}
 
-	Atom property = XInternAtom(display, "_MOTIF_WM_HINTS", true);
+	Atom property = X11->XInternAtom(display, "_MOTIF_WM_HINTS", true);
 	hints.flags = 2;
 	hints.decorations = fullscreen ? 0 : 1;
-	XChangeProperty(display, window, property, property, 32, PropModeReplace, (unsigned char*)&hints, 5);
-	XMapWindow(display, window);
-	XFlush(display);
-#elif defined(__APPLE__)
-	(void)fullscreen;
+	X11->XChangeProperty(display, window, property, property, 32, PropModeReplace, (unsigned char*)&hints, 5);
+	X11->XMapWindow(display, window);
+	X11->XFlush(display);
+#elif defined(EDOPRO_MACOS)
 	EDOPRO_ToggleFullScreen();
 #endif
 }
@@ -235,7 +332,7 @@ void GUIUtils::ToggleFullscreen(irr::IrrlichtDevice* device, bool& fullscreen) {
 void GUIUtils::ShowErrorWindow(epro::stringview context, epro::stringview message) {
 #ifdef _WIN32
 	MessageBox(nullptr, Utils::ToPathString(message).data(), Utils::ToPathString(context).data(), MB_OK | MB_ICONERROR);
-#elif defined (__APPLE__)
+#elif defined (EDOPRO_MACOS)
 	CFStringRef header_ref = CFStringCreateWithCString(nullptr, context.data(), context.size());
 	CFStringRef message_ref = CFStringCreateWithCString(nullptr, message.data(), message.size());
 
@@ -259,7 +356,64 @@ void GUIUtils::ShowErrorWindow(epro::stringview context, epro::stringview messag
 	//Clean up the strings
 	CFRelease(header_ref);
 	CFRelease(message_ref);
+#elif defined(__ANDROID__)
+	porting::showErrorDialog(context, message);
+#elif defined(__linux__)
+	auto pid = vfork();
+	if(pid == 0) {
+		execl("/usr/bin/kdialog", "kdialog", "--title", context.data(), "--error", message.data());
+		execl("/usr/bin/zenity", "zenity", "--title", context.data(), "--error", message.data());
+		_exit(EXIT_FAILURE);
+	} else if(pid > 0)
+		(void)waitpid(pid, nullptr, 0);
+#endif
+}
+
+std::string GUIUtils::SerializeWindowPosition(irr::IrrlichtDevice* device) {
+#ifdef _WIN32
+	auto hWnd = GetWindowHandle(device->getVideoDriver());
+	WINDOWPLACEMENT wp;
+	wp.length = sizeof(WINDOWPLACEMENT);
+	GetWindowPlacement(hWnd, &wp);
+	return base64_encode<std::string>(reinterpret_cast<uint8_t*>(&wp), sizeof(wp));
+#elif defined (EDOPRO_MACOS)
+	return EDOPRO_GetWindowRect(device->getVideoDriver()->getExposedVideoData().OpenGLOSX.Window);
+#else
+	return std::string{};
 #endif
 }
 
 }
+
+#if defined(__linux__) && ! defined(__ANDROID__)
+#define LOAD_LIBRARY(name) do {\
+name = (decltype(name))dlsym(LibX11, #name);\
+if(!name){\
+	dlclose(LibX11);\
+	LibX11=nullptr;\
+	return;\
+}\
+} while(0)
+
+X11Helper::X11Helper() {
+	LibX11 = dlopen("libX11.so", RTLD_LAZY); //libx11 has almost 2000 exported symbols
+											 //there's no point in using RTDL_NOW
+	if(!LibX11)
+		LibX11 = dlopen("libX11.so.6", RTLD_LAZY);
+	LOAD_LIBRARY(XOpenDisplay);
+	LOAD_LIBRARY(XGetInputFocus);
+	LOAD_LIBRARY(XInternAtom);
+	LOAD_LIBRARY(XGetWindowProperty);
+	LOAD_LIBRARY(XFree);
+	LOAD_LIBRARY(XSendEvent);
+	LOAD_LIBRARY(XChangeProperty);
+	LOAD_LIBRARY(XMapWindow);
+	LOAD_LIBRARY(XFlush);
+}
+#undef LOAD_LIBRARY
+
+X11Helper::~X11Helper() {
+	if(LibX11)
+		dlclose(LibX11);
+}
+#endif

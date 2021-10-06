@@ -29,8 +29,6 @@ bool SoundSFMLBase::PlayMusic(const std::string& name, bool loop)
 	const auto status = music.getStatus();
 	if(status != Status::Stopped && cur_music == name)
 		return true;
-	if(status == Status::Playing)
-		music.stop();
 	if(!music.openFromFile(name))
 		return false;
 	cur_music = name;
@@ -40,13 +38,14 @@ bool SoundSFMLBase::PlayMusic(const std::string& name, bool loop)
 }
 const sf::SoundBuffer& SoundSFMLBase::LookupSound(const std::string& name)
 {
-	auto& buf = buffers[name];
-	if (!buf) {
+	auto it = buffers.find(name);
+	if (it == buffers.end()) {
 		std::unique_ptr<sf::SoundBuffer> new_buf(new sf::SoundBuffer);
 		new_buf->loadFromFile(name);
-		buf.swap(new_buf);
+		const auto ret = buffers.emplace(name, std::move(new_buf));
+		it = ret.first;
 	}
-	return *buf;
+	return *it->second;
 }
 
 bool SoundSFMLBase::PlaySound(const std::string& name)
@@ -74,13 +73,17 @@ void SoundSFMLBase::StopMusic()
 
 void SoundSFMLBase::PauseMusic(bool pause)
 {
-	if (pause) music.pause();
-	else music.play();
+	if(music.getStatus() == Status::Stopped)
+		return;
+	if(pause)
+		music.pause();
+	else
+		music.play();
 }
 
 bool SoundSFMLBase::MusicPlaying()
 {
-	return music.getStatus() == Status::Playing;
+	return music.getStatus() != Status::Stopped;
 }
 
 void SoundSFMLBase::Tick()

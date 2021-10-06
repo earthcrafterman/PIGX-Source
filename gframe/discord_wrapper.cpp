@@ -9,20 +9,20 @@
 #include <IGUIStaticText.h>
 #include <IGUITabControl.h>
 #include <IGUIWindow.h>
-#include "text_types.h"
 #include "discord_register.h"
 #include "discord_rpc.h"
 #include "game.h"
 #include "duelclient.h"
 #include "logging.h"
 #endif
+#include "text_types.h"
 #include "discord_wrapper.h"
 
+#ifdef DISCORD_APP_ID
 #ifdef _WIN32
 #define formatstr EPRO_TEXT("\"{0}\" from_discord \"{1}\"")
 //The registry entry on windows seems to need the path with \ as separator rather than /
-epro::path_string Unescape(epro::path_stringview _path) {
-	epro::path_string path{ _path.data(), _path.size() };
+epro::path_string Unescape(epro::path_string path) {
 	std::replace(path.begin(), path.end(), EPRO_TEXT('/'), EPRO_TEXT('\\'));
 	return path;
 }
@@ -30,6 +30,7 @@ epro::path_string Unescape(epro::path_stringview _path) {
 #define formatstr R"(bash -c "\\"{0}\\" from_discord \\"{1}\\"")"
 #define Unescape(x) x
 #endif
+#endif //DISCORD_APP_ID
 
 bool DiscordWrapper::Initialize() {
 #ifdef DISCORD_APP_ID
@@ -48,10 +49,12 @@ bool DiscordWrapper::Initialize() {
 void DiscordWrapper::UpdatePresence(PresenceType type) {
 #ifdef DISCORD_APP_ID
 	auto CreateSecret = [&secret_buf=secret_buf](bool update) {
-		if(!update)
-			return secret_buf;
-		auto& secret = ygo::mainGame->dInfo.secret;
-		fmt::format_to_n(secret_buf, sizeof(secret_buf), "{{\"id\": {},\"addr\" : {},\"port\" : {},\"pass\" : \"{}\" }}", secret.game_id, secret.server_address, secret.server_port, secret.pass.data());
+		if(update) {
+			auto& secret = ygo::mainGame->dInfo.secret;
+			auto ret = fmt::format_to_n(secret_buf, sizeof(secret_buf) - 1, "{{\"id\": {},\"addr\" : {},\"port\" : {},\"pass\" : \"{}\" }}",
+							 secret.game_id, secret.server_address, secret.server_port, BufferIO::EncodeUTF8(secret.pass));
+			*ret.out = '\0';
+		}
 		return secret_buf;
 	};
 	if(type == INITIALIZE && !running) {
@@ -70,15 +73,14 @@ void DiscordWrapper::UpdatePresence(PresenceType type) {
 	}
 	if(!running)
 		return;
-	PresenceType previous = presence;
+	if(presence == type)
+		return;
 	presence = type;
-	if(previous != presence)
-		start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	if(type == CLEAR) {
 		Discord_ClearPresence();
 		return;
 	}
-	DiscordRichPresence discordPresence = {};
+	DiscordRichPresence discordPresence{};
 	std::string presenceState;
 	std::string partyid;
 	switch(presence) {
@@ -137,7 +139,7 @@ void DiscordWrapper::UpdatePresence(PresenceType type) {
 			break;
 	}
 	discordPresence.state = presenceState.data();
-	discordPresence.startTimestamp = start;
+	discordPresence.startTimestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	discordPresence.largeImageKey = "game-icon";
 	discordPresence.partyId = partyid.data();
 	Discord_UpdatePresence(&discordPresence);
@@ -171,7 +173,7 @@ static void OnDisconnected(int errcode, const char* message, void* payload) {
 	static_cast<ygo::Game*>(payload)->discord.connected = false;
 }
 
-static void OnError(int errcode, const char * message, void* payload) {
+static void OnError(int errcode, const char* message, void* payload) {
 }
 
 static void OnJoin(const char* secret, void* payload) {
@@ -185,37 +187,37 @@ static void OnJoin(const char* secret, void* payload) {
 		host.game_id = json["id"].get<int>();
 		host.server_address = json["addr"].get<int>();
 		host.server_port = json["port"].get<int>();
-		host.pass = json["pass"].get<std::string>();
+		host.pass = BufferIO::DecodeUTF8(json["pass"].get_ref<const std::string&>());
 	}
-	catch(std::exception& e) {
+	catch(const std::exception& e) {
 		ygo::ErrorLog(fmt::format("Exception occurred: {}", e.what()));
 		return;
 	}
 	game->isHostingOnline = true;
 	if(ygo::DuelClient::StartClient(host.server_address, host.server_port, host.game_id, false)) {
-#define HIDE_AND_CHECK(obj) if(obj->isVisible()) game->HideElement(obj);
+#define HIDE_AND_CHECK(obj) do {if(obj->isVisible()) game->HideElement(obj);} while(0)
 		if(game->is_building)
 			game->deckBuilder.Terminate(false);
-		HIDE_AND_CHECK(game->wMainMenu)
-		HIDE_AND_CHECK(game->wLanWindow)
-		HIDE_AND_CHECK(game->wCreateHost)
-		HIDE_AND_CHECK(game->wReplay)
-		HIDE_AND_CHECK(game->wSinglePlay)
-		HIDE_AND_CHECK(game->wDeckEdit)
-		HIDE_AND_CHECK(game->wRules)
-		HIDE_AND_CHECK(game->wCustomRules)
-		HIDE_AND_CHECK(game->wRoomListPlaceholder)
-		HIDE_AND_CHECK(game->wCardImg)
-		HIDE_AND_CHECK(game->wInfos)
-		HIDE_AND_CHECK(game->btnLeaveGame)
-		HIDE_AND_CHECK(game->wReplaySave)
+		HIDE_AND_CHECK(game->wMainMenu);
+		HIDE_AND_CHECK(game->wLanWindow);
+		HIDE_AND_CHECK(game->wCreateHost);
+		HIDE_AND_CHECK(game->wReplay);
+		HIDE_AND_CHECK(game->wSinglePlay);
+		HIDE_AND_CHECK(game->wDeckEdit);
+		HIDE_AND_CHECK(game->wRules);
+		HIDE_AND_CHECK(game->wCustomRules);
+		HIDE_AND_CHECK(game->wRoomListPlaceholder);
+		HIDE_AND_CHECK(game->wCardImg);
+		HIDE_AND_CHECK(game->wInfos);
+		HIDE_AND_CHECK(game->btnLeaveGame);
+		HIDE_AND_CHECK(game->wFileSave);
 		game->device->setEventReceiver(&game->menuHandler);
 #undef HIDE_AND_CHECK
 	}
 }
 
 static void OnSpectate(const char* secret, void* payload) {
-	fmt::print("Join: {}\n", secret);
+	fmt::print("Join Spectating: {}\n", secret);
 }
 
 static void OnJoinRequest(const DiscordUser* request, void* payload) {
@@ -223,7 +225,10 @@ static void OnJoinRequest(const DiscordUser* request, void* payload) {
 			   request->username,
 			   request->discriminator,
 			   request->userId);
-	Discord_Respond(request->userId, DISCORD_REPLY_YES);
+	if(ygo::mainGame->dInfo.secret.pass.empty())
+		Discord_Respond(request->userId, DISCORD_REPLY_YES);
+	else
+		Discord_Respond(request->userId, DISCORD_REPLY_NO);
 }
 #endif
 

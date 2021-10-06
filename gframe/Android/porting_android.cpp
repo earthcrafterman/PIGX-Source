@@ -16,24 +16,71 @@
 #include "../game.h"
 
 #define JPARAMS(...)  "(" __VA_ARGS__ ")"
+#define JARRAY(...) "[" __VA_ARGS__
 #define JSTRING "Ljava/lang/String;"
 #define JINT "I"
 #define JVOID "V"
+#define JBYTE "B"
+#define JBOOL "Z"
 
-#define JstringtoC(type, rettype, ...)\
-std::rettype JstringtoC##type(JNIEnv* env, const jstring& jnistring) {\
-	const size_t len = env->GetStringUTFLength(jnistring);\
-	const char* text = env->GetStringUTFChars(jnistring, nullptr);\
-	std::rettype res __VA_ARGS__({text, len});\
-	env->ReleaseStringUTFChars(jnistring, text);\
-	return res;\
+namespace {
+
+std::string JstringtoCA(JNIEnv* env, const jstring& jnistring) {
+	if(!jnistring)
+		return "";
+
+	const auto stringClass = env->GetObjectClass(jnistring);
+	const auto getBytes = env->GetMethodID(stringClass, "getBytes", JPARAMS(JSTRING)JARRAY(JBYTE));
+	jstring UTF8_STRING = env->NewStringUTF("UTF-8");
+	const auto stringJbytes = static_cast<jbyteArray>(env->CallObjectMethod(jnistring, getBytes, UTF8_STRING));
+
+	size_t length = (size_t)env->GetArrayLength(stringJbytes);
+	jbyte* pBytes = env->GetByteArrayElements(stringJbytes, nullptr);
+
+	std::string ret{ (char*)pBytes, length };
+	env->ReleaseByteArrayElements(stringJbytes, pBytes, JNI_ABORT);
+
+	env->DeleteLocalRef(stringJbytes);
+	env->DeleteLocalRef(stringClass);
+	env->DeleteLocalRef(UTF8_STRING);
+	return ret;
 }
 
-JstringtoC(W, wstring, = BufferIO::DecodeUTF8s)
-JstringtoC(A, string)
+inline std::wstring JstringtoCW(JNIEnv* env, const jstring& jnistring) {
+	return BufferIO::DecodeUTF8(JstringtoCA(env, jnistring));
+}
+
+//calls: Charset.forName("UTF-8").decode(bb).toString()
+jstring NewJavaString(JNIEnv* env, epro::stringview string) {
+	jobject bb = env->NewDirectByteBuffer((void*)string.data(), string.size());
+
+	jclass cls_Charset = env->FindClass("java/nio/charset/Charset");
+	jmethodID mid_Charset_forName = env->GetStaticMethodID(cls_Charset, "forName", JPARAMS(JSTRING)"Ljava/nio/charset/Charset;");
+	jstring UTF8_STRING = env->NewStringUTF("UTF-8");
+	jobject charset = env->CallStaticObjectMethod(cls_Charset, mid_Charset_forName, UTF8_STRING);
+
+	jmethodID mid_Charset_decode = env->GetMethodID(cls_Charset, "decode", JPARAMS("Ljava/nio/ByteBuffer;")"Ljava/nio/CharBuffer;");
+	jobject cb = env->CallObjectMethod(charset, mid_Charset_decode, bb);
+
+	jclass cls_CharBuffer = env->FindClass("java/nio/CharBuffer");
+	jmethodID mid_CharBuffer_toString = env->GetMethodID(cls_CharBuffer, "toString", JPARAMS()JSTRING);
+	jstring ret = static_cast<jstring>(env->CallObjectMethod(cb, mid_CharBuffer_toString));
+
+	env->DeleteLocalRef(cls_Charset);
+	env->DeleteLocalRef(cls_CharBuffer);
+	env->DeleteLocalRef(charset);
+	env->DeleteLocalRef(cb);
+	env->DeleteLocalRef(bb);
+	env->DeleteLocalRef(UTF8_STRING);
+
+	return ret;
+}
 
 std::mutex* queued_messages_mutex = nullptr;
+std::atomic_bool error_dialog_returned{ true };
 std::deque<std::function<void()>>* events = nullptr;
+std::unique_ptr<std::unique_lock<std::mutex>> mainGameMutex = nullptr;
+}
 
 extern "C" {
 	JNIEXPORT void JNICALL Java_io_github_edo9300_edopro_EpNativeActivity_putMessageBoxResult(
@@ -91,6 +138,11 @@ extern "C" {
 			queued_messages_mutex->unlock();
 		}
 	}
+
+	JNIEXPORT void JNICALL Java_io_github_edo9300_edopro_EpNativeActivity_errorDialogReturn(
+		JNIEnv* env, jclass thiz) {
+		error_dialog_returned = true;
+	}
 }
 
 namespace porting {
@@ -109,41 +161,52 @@ std::vector<std::string> GetExtraParameters() {
 	jobject me = app_global->activity->clazz;
 
 	jclass acl = jnienv->GetObjectClass(me); //class pointer of NativeActivity
-	jmethodID giid = jnienv->GetMethodID(acl, "getIntent", "()Landroid/content/Intent;");
+	jmethodID giid = jnienv->GetMethodID(acl, "getIntent", JPARAMS()"Landroid/content/Intent;");
 	jobject intent = jnienv->CallObjectMethod(me, giid); //Got our intent
 
-	jclass icl = jnienv->GetObjectClass(intent); //class pointer of Intent
-	jmethodID gseid = jnienv->GetMethodID(icl, "getStringArrayExtra", "(Ljava/lang/String;)[Ljava/lang/String;");
+	jnienv->DeleteLocalRef(acl);
 
-	jobjectArray stringArrays = (jobjectArray)jnienv->CallObjectMethod(intent, gseid, jnienv->NewStringUTF("ARGUMENTS"));
+	jclass icl = jnienv->GetObjectClass(intent); //class pointer of Intent
+	jmethodID gseid = jnienv->GetMethodID(icl, "getStringArrayExtra", JPARAMS(JSTRING)JARRAY(JSTRING));
+	jnienv->DeleteLocalRef(icl);
+
+	auto argstring = jnienv->NewStringUTF("ARGUMENTS");
+
+	jobjectArray stringArrays = (jobjectArray)jnienv->CallObjectMethod(intent, gseid, argstring);
+
+	jnienv->DeleteLocalRef(argstring);
+	jnienv->DeleteLocalRef(intent);
 
 	int size = jnienv->GetArrayLength(stringArrays);
 
 	for(int i = 0; i < size; ++i) {
 		jstring string = (jstring)jnienv->GetObjectArrayElement(stringArrays, i);
 		ret.push_back(JstringtoCA(jnienv, string));
+		jnienv->DeleteLocalRef(string);
 	}
+	jnienv->DeleteLocalRef(stringArrays);
 	return ret;
 }
 
 jclass findClass(std::string classname, JNIEnv* env = nullptr) {
 	env = env ? env : jnienv;
-	if(env == 0) {
+	if(env == nullptr)
 		return 0;
-	}
+
 	jclass nativeactivity = env->FindClass("android/app/NativeActivity");
-	jmethodID getClassLoader =
-		env->GetMethodID(nativeactivity, "getClassLoader",
-						 "()Ljava/lang/ClassLoader;");
-	jobject cls =
-		env->CallObjectMethod(app_global->activity->clazz, getClassLoader);
+	jmethodID getClassLoader = env->GetMethodID(nativeactivity, "getClassLoader", JPARAMS()"Ljava/lang/ClassLoader;");
+	jobject cls = env->CallObjectMethod(app_global->activity->clazz, getClassLoader);
 	jclass classLoader = env->FindClass("java/lang/ClassLoader");
-	jmethodID findClass =
-		env->GetMethodID(classLoader, "loadClass",
-						 "(Ljava/lang/String;)Ljava/lang/Class;");
-	jstring strClassName =
-		env->NewStringUTF(classname.c_str());
-	return (jclass)env->CallObjectMethod(cls, findClass, strClassName);
+	jmethodID findClass = env->GetMethodID(classLoader, "loadClass", JPARAMS(JSTRING)"Ljava/lang/Class;");
+	jstring strClassName = env->NewStringUTF(classname.c_str());
+	auto ret = static_cast<jclass>(env->CallObjectMethod(cls, findClass, strClassName));
+
+	jnienv->DeleteLocalRef(nativeactivity);
+	jnienv->DeleteLocalRef(cls);
+	jnienv->DeleteLocalRef(classLoader);
+	jnienv->DeleteLocalRef(strClassName);
+
+	return ret;
 }
 
 void initAndroid() {
@@ -169,98 +232,85 @@ void cleanupAndroid() {
 	jvm->DetachCurrentThread();
 }
 
-void displayKeyboard(bool pShow) {
-	// Attaches the current thread to the JVM.
-	jint lResult;
-	jint lFlags = 0;
-
-	JavaVM* lJavaVM = app_global->activity->vm;
-	JNIEnv* lJNIEnv = app_global->activity->env;
-
-	JavaVMAttachArgs lJavaVMAttachArgs;
-	lJavaVMAttachArgs.version = JNI_VERSION_1_6;
-	lJavaVMAttachArgs.name = "NativeThread";
-	lJavaVMAttachArgs.group = nullptr;
-
-	lResult = lJavaVM->AttachCurrentThread(&lJNIEnv, &lJavaVMAttachArgs);
-	if(lResult == JNI_ERR) {
-		return;
-	}
-
+void displayKeyboard(bool pShow) {	
 	// Retrieves NativeActivity.
 	jobject lNativeActivity = app_global->activity->clazz;
-	jclass ClassNativeActivity = lJNIEnv->GetObjectClass(lNativeActivity);
+	jclass ClassNativeActivity = jnienv->GetObjectClass(lNativeActivity);
 
 	// Retrieves Context.INPUT_METHOD_SERVICE.
-	jclass ClassContext = lJNIEnv->FindClass("android/content/Context");
+	jclass ClassContext = jnienv->FindClass("android/content/Context");
 	jfieldID FieldINPUT_METHOD_SERVICE =
-		lJNIEnv->GetStaticFieldID(ClassContext,
+		jnienv->GetStaticFieldID(ClassContext,
 								  "INPUT_METHOD_SERVICE", "Ljava/lang/String;");
 	jobject INPUT_METHOD_SERVICE =
-		lJNIEnv->GetStaticObjectField(ClassContext,
+		jnienv->GetStaticObjectField(ClassContext,
 									  FieldINPUT_METHOD_SERVICE);
 
+	jnienv->DeleteLocalRef(ClassContext);
+
 	// Runs getSystemService(Context.INPUT_METHOD_SERVICE).
-	jclass ClassInputMethodManager = lJNIEnv->FindClass(
+	jclass ClassInputMethodManager = jnienv->FindClass(
 		"android/view/inputmethod/InputMethodManager");
-	jmethodID MethodGetSystemService = lJNIEnv->GetMethodID(
-		ClassNativeActivity, "getSystemService",
-		"(Ljava/lang/String;)Ljava/lang/Object;");
-	jobject lInputMethodManager = lJNIEnv->CallObjectMethod(
+	jmethodID MethodGetSystemService = jnienv->GetMethodID(
+		ClassNativeActivity, "getSystemService", JPARAMS(JSTRING)"Ljava/lang/Object;");
+	jobject lInputMethodManager = jnienv->CallObjectMethod(
 		lNativeActivity, MethodGetSystemService,
 		INPUT_METHOD_SERVICE);
 
+	jnienv->DeleteLocalRef(INPUT_METHOD_SERVICE);
+
 	// Runs getWindow().getDecorView().
-	jmethodID MethodGetWindow = lJNIEnv->GetMethodID(
-		ClassNativeActivity, "getWindow",
-		"()Landroid/view/Window;");
-	jobject lWindow = lJNIEnv->CallObjectMethod(lNativeActivity,
+	jmethodID MethodGetWindow = jnienv->GetMethodID(
+		ClassNativeActivity, "getWindow", JPARAMS()"Landroid/view/Window;");
+	jobject lWindow = jnienv->CallObjectMethod(lNativeActivity,
 												MethodGetWindow);
-	jclass ClassWindow = lJNIEnv->FindClass(
+	jclass ClassWindow = jnienv->FindClass(
 		"android/view/Window");
-	jmethodID MethodGetDecorView = lJNIEnv->GetMethodID(
-		ClassWindow, "getDecorView", "()Landroid/view/View;");
-	jobject lDecorView = lJNIEnv->CallObjectMethod(lWindow,
+	jmethodID MethodGetDecorView = jnienv->GetMethodID(
+		ClassWindow, "getDecorView", JPARAMS()"Landroid/view/View;");
+	jobject lDecorView = jnienv->CallObjectMethod(lWindow,
 												   MethodGetDecorView);
 
+	jnienv->DeleteLocalRef(lWindow);
+	jnienv->DeleteLocalRef(ClassWindow);
+
+	jint lFlags = 0;
 	if(pShow) {
 		// Runs lInputMethodManager.showSoftInput(...).
-		jmethodID MethodShowSoftInput = lJNIEnv->GetMethodID(
-			ClassInputMethodManager, "showSoftInput",
-			"(Landroid/view/View;I)Z");
-		jboolean lResult = lJNIEnv->CallBooleanMethod(
+		jmethodID MethodShowSoftInput = jnienv->GetMethodID(
+			ClassInputMethodManager, "showSoftInput", JPARAMS("Landroid/view/View;" JINT)JBOOL);
+		jboolean lResult = jnienv->CallBooleanMethod(
 			lInputMethodManager, MethodShowSoftInput,
 			lDecorView, lFlags);
 	} else {
 		// Runs lWindow.getViewToken()
-		jclass ClassView = lJNIEnv->FindClass(
+		jclass ClassView = jnienv->FindClass(
 			"android/view/View");
-		jmethodID MethodGetWindowToken = lJNIEnv->GetMethodID(
-			ClassView, "getWindowToken", "()Landroid/os/IBinder;");
-		jobject lBinder = lJNIEnv->CallObjectMethod(lDecorView,
+		jmethodID MethodGetWindowToken = jnienv->GetMethodID(
+			ClassView, "getWindowToken", JPARAMS()"Landroid/os/IBinder;");
+
+		jnienv->DeleteLocalRef(ClassView);
+
+		jobject lBinder = jnienv->CallObjectMethod(lDecorView,
 													MethodGetWindowToken);
 
 		// lInputMethodManager.hideSoftInput(...).
-		jmethodID MethodHideSoftInput = lJNIEnv->GetMethodID(
+		jmethodID MethodHideSoftInput = jnienv->GetMethodID(
 			ClassInputMethodManager, "hideSoftInputFromWindow",
-			"(Landroid/os/IBinder;I)Z");
-		jboolean lRes = lJNIEnv->CallBooleanMethod(
+			JPARAMS("Landroid/os/IBinder;" JINT)JBOOL);
+		jboolean lRes = jnienv->CallBooleanMethod(
 			lInputMethodManager, MethodHideSoftInput,
 			lBinder, lFlags);
+
+		jnienv->DeleteLocalRef(lBinder);
 	}
 
-	// Finished with the JVM.
-	lJavaVM->DetachCurrentThread();
+	jnienv->DeleteLocalRef(ClassNativeActivity);
+	jnienv->DeleteLocalRef(lInputMethodManager);
+	jnienv->DeleteLocalRef(ClassInputMethodManager);
+	jnienv->DeleteLocalRef(lDecorView);
 }
 
-/**
- * show text input dialog in java
- * @param acceptButton text to display on accept button
- * @param hint hint to show
- * @param current initial value to display
- * @param editType type of texfield
- * (1==multiline text input; 2==single line text input; 3=password field)
- */
 void showInputDialog(epro::path_stringview current) {
 	jmethodID showdialog = jnienv->GetMethodID(nativeActivity, "showDialog", JPARAMS(JSTRING)JVOID);
 
@@ -268,27 +318,28 @@ void showInputDialog(epro::path_stringview current) {
 		assert("porting::showInputDialog unable to find java show dialog method" == 0);
 	}
 
-	jstring jcurrent = jnienv->NewStringUTF(current.data());
+	jstring jcurrent = NewJavaString(jnienv, current);
 
 	jnienv->CallVoidMethod(app_global->activity->clazz, showdialog, jcurrent);
+
+	jnienv->DeleteLocalRef(jcurrent);
 }
 
 void showComboBox(const std::vector<std::string>& list) {
-	jmethodID showbox = jnienv->GetMethodID(nativeActivity, "showComboBox",
-											"([Ljava/lang/String;)V");
+	jmethodID showbox = jnienv->GetMethodID(nativeActivity, "showComboBox", JPARAMS(JARRAY(JSTRING))JVOID);
 
-	jstring str;
-	jobjectArray jlist = 0;
 	jsize len = list.size();
-
-	jlist = jnienv->NewObjectArray(len, jnienv->FindClass("java/lang/String"), 0);
+	jobjectArray jlist = jnienv->NewObjectArray(len, jnienv->FindClass("java/lang/String"), 0);
 
 	for(int i = 0; i < list.size(); i++) {
-		str = jnienv->NewStringUTF(list[i].c_str());
-		jnienv->SetObjectArrayElement(jlist, i, str);
+		auto jstring = NewJavaString(jnienv, list[i]);
+		jnienv->SetObjectArrayElement(jlist, i, jstring);
+		jnienv->DeleteLocalRef(jstring);
 	}
 
 	jnienv->CallVoidMethod(app_global->activity->clazz, showbox, jlist);
+
+	jnienv->DeleteLocalRef(jlist);
 }
 
 bool transformEvent(const irr::SEvent & event, bool& stopPropagation) {
@@ -306,7 +357,7 @@ bool transformEvent(const irr::SEvent & event, bool& stopPropagation) {
 						if(ygo::gGameConfig->native_keyboard) {
 							porting::displayKeyboard(true);
 						} else {
-							porting::showInputDialog(BufferIO::EncodeUTF8s(((irr::gui::IGUIEditBox *)hovered)->getText()));
+							porting::showInputDialog(BufferIO::EncodeUTF8(((irr::gui::IGUIEditBox *)hovered)->getText()));
 						}
 						stopPropagation = retval;
 						return retval;
@@ -327,6 +378,8 @@ bool transformEvent(const irr::SEvent & event, bool& stopPropagation) {
 				case APP_CMD_PAUSE: {
 					ygo::mainGame->SaveConfig();
 					ygo::gSoundManager->PauseMusic(true);
+					if(mainGameMutex == nullptr)
+						mainGameMutex = std::unique_ptr<std::unique_lock<std::mutex>>(new std::unique_lock<std::mutex>(ygo::mainGame->gMutex));
 					break;
 				}
 				case APP_CMD_GAINED_FOCUS:
@@ -336,6 +389,7 @@ bool transformEvent(const irr::SEvent & event, bool& stopPropagation) {
 				}
 				case APP_CMD_RESUME: {
 					ygo::gSoundManager->PauseMusic(false);
+					mainGameMutex = nullptr;
 					break;
 				}
 				default: break;
@@ -444,22 +498,52 @@ int getLocalIP() {
 void name(epro::path_stringview arg) {\
 jmethodID name = jnienv->GetMethodID(nativeActivity, #name, JPARAMS(JSTRING)JVOID);\
 if(name == 0) assert("porting::" #name " unable to find java " #name " method" == 0);\
-jstring jargs = jnienv->NewStringUTF(arg.data());\
+jstring jargs = NewJavaString(jnienv, arg);\
 jnienv->CallVoidMethod(app_global->activity->clazz, name, jargs);\
+jnienv->DeleteLocalRef(jargs);\
 }
 
 JAVAVOIDSTRINGMETHOD(launchWindbot)
+JAVAVOIDSTRINGMETHOD(addWindbotDatabase)
 JAVAVOIDSTRINGMETHOD(installUpdate)
 JAVAVOIDSTRINGMETHOD(openUrl)
 JAVAVOIDSTRINGMETHOD(openFile)
+JAVAVOIDSTRINGMETHOD(shareFile)
+
+void showErrorDialog(epro::stringview context, epro::stringview message) {
+	jmethodID showDialog = jnienv->GetMethodID(nativeActivity, "showErrorDialog", JPARAMS(JSTRING JSTRING)JVOID);
+	if(showDialog == 0)
+		assert("porting::showErrorDialog unable to find java showErrorDialog method" == 0);
+	jstring jcontext = NewJavaString(jnienv, context);
+	jstring jmessage = NewJavaString(jnienv, message);
+
+	error_dialog_returned = false;
+
+	jnienv->CallVoidMethod(app_global->activity->clazz, showDialog, jcontext, jmessage);
+
+	jnienv->DeleteLocalRef(jcontext);
+	jnienv->DeleteLocalRef(jmessage);
+
+	//keep parsing events so that the activity is drawn properly
+	int Events = 0;
+	int ident = 0;
+	android_poll_source* source = 0;
+	while(app_global->destroyRequested != 0 && 
+		!error_dialog_returned && ALooper_pollAll(-1, nullptr, &Events, (void**)&source) >= 0) {
+		if(source != NULL)
+			source->process(app_global, source);
+	}
+}
 
 void setTextToClipboard(epro::wstringview text) {
 	jmethodID setClip = jnienv->GetMethodID(nativeActivity, "setClipboard", JPARAMS(JSTRING)JVOID);
 	if(setClip == 0)
 		assert("porting::setTextToClipboard unable to find java setClipboard method" == 0);
-	jstring jargs = jnienv->NewStringUTF(BufferIO::EncodeUTF8s(text).data());
+	jstring jargs = NewJavaString(jnienv, BufferIO::EncodeUTF8(text));
 
 	jnienv->CallVoidMethod(app_global->activity->clazz, setClip, jargs);
+
+	jnienv->DeleteLocalRef(jargs);
 }
 
 const wchar_t* getTextFromClipboard() {
@@ -469,6 +553,8 @@ const wchar_t* getTextFromClipboard() {
 		assert("porting::getTextFromClipboard unable to find java getClipboard method" == 0);
 	jstring js_clip = (jstring)jnienv->CallObjectMethod(app_global->activity->clazz, getClip);
 	text = JstringtoCW(jnienv, js_clip);
+
+	jnienv->DeleteLocalRef(js_clip);
 	return text.c_str();
 }
 

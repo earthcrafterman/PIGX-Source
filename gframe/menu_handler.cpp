@@ -28,24 +28,27 @@
 
 namespace ygo {
 
-void UpdateDeck() {
+static void UpdateDeck() {
 	gGameConfig->lastdeck = mainGame->cbDeckSelect->getItem(mainGame->cbDeckSelect->getSelected());
+	const auto& deck = gdeckManager->current_deck;
 	char deckbuf[0xf000];
 	char* pdeck = deckbuf;
-	const auto totsize = gdeckManager->current_deck.main.size() + gdeckManager->current_deck.extra.size() + gdeckManager->current_deck.side.size();
-	if(totsize > (sizeof(deckbuf) - 2 * sizeof(uint32_t)))
+	static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 2;
+	const auto totsize = deck.main.size() + deck.extra.size() + deck.side.size();
+	if(totsize > max_deck_size)
 		return;
-	BufferIO::Write<uint32_t>(pdeck, gdeckManager->current_deck.main.size() + gdeckManager->current_deck.extra.size());
-	BufferIO::Write<uint32_t>(pdeck, gdeckManager->current_deck.side.size());
-	for(size_t i = 0; i < gdeckManager->current_deck.main.size(); ++i)
-		BufferIO::Write<uint32_t>(pdeck, gdeckManager->current_deck.main[i]->code);
-	for(size_t i = 0; i < gdeckManager->current_deck.extra.size(); ++i)
-		BufferIO::Write<uint32_t>(pdeck, gdeckManager->current_deck.extra[i]->code);
-	for(size_t i = 0; i < gdeckManager->current_deck.side.size(); ++i)
-		BufferIO::Write<uint32_t>(pdeck, gdeckManager->current_deck.side[i]->code);
+	BufferIO::Write<uint32_t>(pdeck, deck.main.size() + deck.extra.size());
+	BufferIO::Write<uint32_t>(pdeck, deck.side.size());
+	for(const auto& pcard : deck.main)
+		BufferIO::Write<uint32_t>(pdeck, pcard->code);
+	for(const auto& pcard : deck.extra)
+		BufferIO::Write<uint32_t>(pdeck, pcard->code);
+	for(const auto& pcard : deck.side)
+		BufferIO::Write<uint32_t>(pdeck, pcard->code);
 	DuelClient::SendBufferToServer(CTOS_UPDATE_DECK, deckbuf, pdeck - deckbuf);
+	gdeckManager->sent_deck = gdeckManager->current_deck;
 }
-void LoadReplay() {
+static void LoadReplay() {
 	auto& replay = ReplayMode::cur_replay;
 	if(open_file) {
 		bool res = replay.OpenReplay(open_file_name);
@@ -87,7 +90,7 @@ void LoadReplay() {
 		start_turn = 0;
 	ReplayMode::StartReplay(start_turn, (mainGame->chkYrp->isChecked() || replay.pheader.id == REPLAY_YRP1));
 }
-inline void TriggerEvent(irr::gui::IGUIElement* target, irr::gui::EGUI_EVENT_TYPE type) {
+static inline void TriggerEvent(irr::gui::IGUIElement* target, irr::gui::EGUI_EVENT_TYPE type) {
 	irr::SEvent event;
 	event.EventType = irr::EET_GUI_EVENT;
 	event.GUIEvent.EventType = type;
@@ -95,7 +98,7 @@ inline void TriggerEvent(irr::gui::IGUIElement* target, irr::gui::EGUI_EVENT_TYP
 	ygo::mainGame->device->postEventFromUser(event);
 }
 
-inline void ClickButton(irr::gui::IGUIElement* btn) {
+static inline void ClickButton(irr::gui::IGUIElement* btn) {
 	TriggerEvent(btn, irr::gui::EGET_BUTTON_CLICKED);
 }
 bool MenuHandler::OnEvent(const irr::SEvent& event) {
@@ -108,7 +111,13 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 		int id = caller->getID();
 		if(mainGame->wRules->isVisible() && (id != BUTTON_RULE_OK && id != CHECKBOX_EXTRA_RULE && id != COMBOBOX_DUEL_RULE))
 			break;
-		if(mainGame->wMessage->isVisible() && id != BUTTON_MSG_OK && prev_operation != ACTION_UPDATE_PROMPT && prev_operation != ACTION_SHOW_CHANGELOG)
+		if(mainGame->wMessage->isVisible() && id != BUTTON_MSG_OK &&
+		   prev_operation != ACTION_UPDATE_PROMPT
+		   && prev_operation != ACTION_SHOW_CHANGELOG
+#if defined(__linux__) && !defined(__ANDROID__) && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+		   && prev_operation != ACTION_TRY_WAYLAND
+#endif
+		   )
 			break;
 		if(mainGame->wCustomRules->isVisible() && id != BUTTON_CUSTOM_RULE_OK && ((id < CHECKBOX_OBSOLETE || id > TCG_SEGOC_FIRSTTRIGGER) && id != COMBOBOX_DUEL_RULE))
 			break;
@@ -116,8 +125,8 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			mainGame->wQuery->getParent()->bringToFront(mainGame->wQuery);
 			break;
 		}
-		if(mainGame->wReplaySave->isVisible() && id != BUTTON_REPLAY_SAVE && id != BUTTON_REPLAY_CANCEL) {
-			mainGame->wReplaySave->getParent()->bringToFront(mainGame->wReplaySave);
+		if(mainGame->wFileSave->isVisible() && id != BUTTON_FILE_SAVE && id != BUTTON_FILE_CANCEL) {
+			mainGame->wFileSave->getParent()->bringToFront(mainGame->wFileSave);
 			break;
 		}
 		switch(event.GUIEvent.EventType) {
@@ -192,7 +201,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					auto parsed = DuelClient::ResolveServer(mainGame->ebJoinHost->getText(), mainGame->ebJoinPort->getText());
 					gGameConfig->lasthost = mainGame->ebJoinHost->getText();
 					gGameConfig->lastport = mainGame->ebJoinPort->getText();
-					mainGame->dInfo.secret.pass = BufferIO::EncodeUTF8s(mainGame->ebJoinPass->getText());
+					mainGame->dInfo.secret.pass = mainGame->ebJoinPass->getText();
 					if(DuelClient::StartClient(parsed.first, parsed.second, 0, false)) {
 						mainGame->btnCreateHost->setEnabled(false);
 						mainGame->btnJoinHost->setEnabled(false);
@@ -320,7 +329,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					gGameConfig->serverport = mainGame->ebHostPort->getText();
 					if(!NetServer::StartServer(host_port))
 						break;
-					if(!DuelClient::StartClient(0x7f000001, host_port)) {
+					if(!DuelClient::StartClient(0x100007F /*127.0.0.1 in network byte order*/, host_port)) {
 						NetServer::StopServer();
 						break;
 					}
@@ -425,6 +434,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				mainGame->btnDeleteReplay->setEnabled(false);
 				mainGame->btnRenameReplay->setEnabled(false);
 				mainGame->btnExportDeck->setEnabled(false);
+				mainGame->btnShareReplay->setEnabled(false);
 				mainGame->ebRepStartTurn->setText(L"1");
 				mainGame->chkYrp->setChecked(false);
 				mainGame->chkYrp->setEnabled(false);
@@ -436,6 +446,10 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				mainGame->HideElement(mainGame->wMainMenu);
 				mainGame->stSinglePlayInfo->setText(L"");
 				mainGame->btnLoadSinglePlay->setEnabled(false);
+				mainGame->btnDeleteSinglePlay->setEnabled(false);
+				mainGame->btnRenameSinglePlay->setEnabled(false);
+				mainGame->btnOpenSinglePlay->setEnabled(false);
+				mainGame->btnShareSinglePlay->setEnabled(false);
 				mainGame->ShowElement(mainGame->wSinglePlay);
 				mainGame->RefreshSingleplay();
 				break;
@@ -463,9 +477,17 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				if(sel == -1)
 					break;
 				std::lock_guard<std::mutex> lock(mainGame->gMutex);
-				mainGame->wReplaySave->setText(gDataManager->GetSysString(1362).data());
-				mainGame->ebRSName->setText(mainGame->lstReplayList->getListItem(sel));
-				mainGame->PopupElement(mainGame->wReplaySave);
+				mainGame->PopupSaveWindow(gDataManager->GetSysString(1362), mainGame->lstReplayList->getListItem(sel), gDataManager->GetSysString(1342));
+				prev_operation = id;
+				prev_sel = sel;
+				break;
+			}
+			case BUTTON_RENAME_SINGLEPLAY: {
+				int sel = mainGame->lstSinglePlayList->getSelected();
+				if(sel == -1)
+					break;
+				std::lock_guard<std::mutex> lock(mainGame->gMutex);
+				mainGame->PopupSaveWindow(gDataManager->GetSysString(1362), mainGame->lstSinglePlayList->getListItem(sel), gDataManager->GetSysString(1201));
 				prev_operation = id;
 				prev_sel = sel;
 				break;
@@ -487,28 +509,28 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			case BUTTON_BOT_ADD: {
 				try {
 					int port = std::stoi(gGameConfig->serverport);
-					mainGame->gBot.LaunchSelected(port, BufferIO::DecodeUTF8s(mainGame->dInfo.secret.pass));
-				}
-				catch(...) {
-				}
+					if(mainGame->gBot.LaunchSelected(port, mainGame->dInfo.secret.pass))
+						break;
+				} catch(...) {}
+				mainGame->PopupMessage(L"Failed to launch windbot");
 				break;
 			}
 			case BUTTON_EXPORT_DECK: {
 				auto sanitize = [](epro::path_string text) {
-					const wchar_t chars[] = L"<>:\"/\\|?*";
+					constexpr wchar_t chars[] = L"<>:\"/\\|?*";
 					for(auto& forbid : chars)
 						text.erase(std::remove(text.begin(), text.end(), forbid), text.end());
 					return text;
 				};
 				if(!ReplayMode::cur_replay.IsExportable())
 					break;
-				auto players = ReplayMode::cur_replay.GetPlayerNames();
+				const auto& players = ReplayMode::cur_replay.GetPlayerNames();
 				if(players.empty())
 					break;
-				auto decks = ReplayMode::cur_replay.GetPlayerDecks();
+				const auto& decks = ReplayMode::cur_replay.GetPlayerDecks();
 				if(players.size() > decks.size())
 					break;
-				auto replay_name = Utils::GetFileName(ReplayMode::cur_replay.GetReplayName());
+				const auto replay_name = Utils::GetFileName(ReplayMode::cur_replay.GetReplayName());
 				for(size_t i = 0; i < decks.size(); i++) {
 					gdeckManager->SaveDeck(fmt::format(EPRO_TEXT("{} player{:02} {}"), replay_name, i, sanitize(Utils::ToPathString(players[i]))), decks[i].main_deck, decks[i].extra_deck, cardlist_type());
 				}
@@ -516,14 +538,54 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				mainGame->PopupElement(mainGame->wACMessage, 20);
 				break;
 			}
+			case BUTTON_SHARE_REPLAY: {
+				const auto& list = mainGame->lstReplayList;
+				const auto selected = list->getSelected();
+				if(selected != -1 && !list->isDirectory(selected)) {
+					Utils::SystemOpen(Utils::ToPathString(list->getListItem(selected, true)), Utils::SHARE_FILE);
+				}
+				break;
+			}
+			case BUTTON_DELETE_SINGLEPLAY: {
+				int sel = mainGame->lstSinglePlayList->getSelected();
+				if(sel == -1)
+					break;
+				std::lock_guard<std::mutex> lock(mainGame->gMutex);
+				mainGame->stQMessage->setText(fmt::format(L"{}\n{}", mainGame->lstSinglePlayList->getListItem(sel), gDataManager->GetSysString(1363)).data());
+				mainGame->PopupElement(mainGame->wQuery);
+				prev_operation = id;
+				prev_sel = sel;
+				break;
+			}
+			case BUTTON_SHARE_SINGLEPLAY: {
+				const auto& list = mainGame->lstSinglePlayList;
+				const auto selected = list->getSelected();
+				if(selected != -1 && !list->isDirectory(selected)) {
+					Utils::SystemOpen(Utils::ToPathString(list->getListItem(selected, true)), Utils::SHARE_FILE);
+				}
+				break;
+			}
+			case BUTTON_OPEN_SINGLEPLAY: {
+				const auto& list = mainGame->lstSinglePlayList;
+				const auto selected = list->getSelected();
+				if(selected != -1 && !list->isDirectory(selected)) {
+					Utils::SystemOpen(Utils::ToPathString(list->getListItem(selected, true)), Utils::OPEN_FILE);
+				}
+				break;
+			}
 			case BUTTON_LOAD_SINGLEPLAY: {
-				if(mainGame->lstSinglePlayList->isDirectory(mainGame->lstSinglePlayList->getSelected()))
-					mainGame->lstSinglePlayList->enterDirectory(mainGame->lstSinglePlayList->getSelected());
+				const auto& list = mainGame->lstSinglePlayList;
+				const auto selected = list->getSelected();
+				if(list->isDirectory(selected))
+					list->enterDirectory(selected);
 				else {
-					if(!open_file && mainGame->lstSinglePlayList->getSelected() == -1)
+					if(!open_file && (selected == -1))
 						break;
 					SingleMode::singleSignal.SetNoWait(false);
-					SingleMode::StartPlay();
+					SingleMode::DuelOptions opts;
+					if(!open_file)
+						opts.scriptName = BufferIO::EncodeUTF8(list->getListItem(selected, true));
+					SingleMode::StartPlay(std::move(opts));
 				}
 				break;
 			}
@@ -555,10 +617,22 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			}
 			case BUTTON_YES: {
 				mainGame->HideElement(mainGame->wQuery);
+#if defined(__linux__) && !defined(__ANDROID__) && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+				if(prev_operation == ACTION_TRY_WAYLAND) {
+					gGameConfig->useWayland = 1;
+					mainGame->SaveConfig();
+					Utils::Reboot();
+				}
+#endif
 				if(prev_operation == BUTTON_DELETE_REPLAY) {
 					if(Replay::DeleteReplay(Utils::ToPathString(mainGame->lstReplayList->getListItem(prev_sel, true)))) {
 						mainGame->stReplayInfo->setText(L"");
 						mainGame->lstReplayList->refreshList();
+					}
+				} else if(prev_operation == BUTTON_DELETE_SINGLEPLAY) {
+					if(Utils::FileDelete(Utils::ToPathString(mainGame->lstSinglePlayList->getListItem(prev_sel, true)))) {
+						mainGame->stSinglePlayInfo->setText(L"");
+						mainGame->lstSinglePlayList->refreshList();
 					}
 				} else if(prev_operation == ACTION_UPDATE_PROMPT) {
 					gClientUpdater->StartUpdate(Game::UpdateDownloadBar, mainGame);
@@ -571,25 +645,40 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				break;
 			}
 			case BUTTON_NO: {
-				if (prev_operation == ACTION_UPDATE_PROMPT || prev_operation == ACTION_SHOW_CHANGELOG) {
+				switch(prev_operation) {
+#if defined(__linux__) && !defined(__ANDROID__) && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+				case ACTION_TRY_WAYLAND:
+					gGameConfig->useWayland = 0;
+					mainGame->SaveConfig();
+					Utils::Reboot();
+#endif
+				case ACTION_UPDATE_PROMPT:
+				case ACTION_SHOW_CHANGELOG:
 					mainGame->wQuery->setRelativePosition(mainGame->ResizeWin(490, 200, 840, 340)); // from Game::OnResize
+				default:
+					break;
 				}
 				mainGame->HideElement(mainGame->wQuery);
 				prev_operation = 0;
 				prev_sel = -1;
 				break;
 			}
-			case BUTTON_REPLAY_SAVE: {
-				mainGame->HideElement(mainGame->wReplaySave);
-				if(prev_operation == BUTTON_RENAME_REPLAY) {
-					auto oldname = Utils::ToPathString(mainGame->lstReplayList->getListItem(prev_sel, true));
+			case BUTTON_FILE_SAVE: {
+				mainGame->HideElement(mainGame->wFileSave);
+				irr::gui::CGUIFileSelectListBox* list = nullptr;
+				if(prev_operation == BUTTON_RENAME_REPLAY)
+					list = mainGame->lstReplayList;
+				else if(prev_operation == BUTTON_RENAME_SINGLEPLAY)
+					list = mainGame->lstSinglePlayList;
+				if(list) {
+					auto oldname = Utils::ToPathString(list->getListItem(prev_sel, true));
 					auto oldpath = Utils::GetFilePath(oldname);
 					auto extension = Utils::GetFileExtension(oldname, false);
-					auto newname = Utils::ToPathString(mainGame->ebRSName->getText());
-					if (Utils::GetFileExtension(newname, false) != extension)
+					auto newname = Utils::ToPathString(mainGame->ebFileSaveName->getText());
+					if(Utils::GetFileExtension(newname, false) != extension)
 						newname.append(1, EPRO_TEXT('.')).append(extension);
-					if(Replay::RenameReplay(oldname, oldpath + newname))
-						mainGame->lstReplayList->refreshList();
+					if(Utils::FileMove(oldname, oldpath + newname))
+						list->refreshList();
 					else
 						mainGame->PopupMessage(gDataManager->GetSysString(1365));
 				}
@@ -597,8 +686,8 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				prev_sel = -1;
 				break;
 			}
-			case BUTTON_REPLAY_CANCEL: {
-				mainGame->HideElement(mainGame->wReplaySave);
+			case BUTTON_FILE_CANCEL: {
+				mainGame->HideElement(mainGame->wFileSave);
 				prev_operation = 0;
 				prev_sel = -1;
 				break;
@@ -629,6 +718,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				mainGame->btnDeleteReplay->setEnabled(false);
 				mainGame->btnRenameReplay->setEnabled(false);
 				mainGame->btnExportDeck->setEnabled(false);
+				mainGame->btnShareReplay->setEnabled(false);
 				mainGame->btnLoadReplay->setText(gDataManager->GetSysString(1348).data());
 				if(sel == -1)
 					break;
@@ -646,6 +736,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				mainGame->btnDeleteReplay->setEnabled(true);
 				mainGame->btnRenameReplay->setEnabled(true);
 				mainGame->btnExportDeck->setEnabled(replay.IsExportable());
+				mainGame->btnShareReplay->setEnabled(true);
 				std::wstring repinfo;
 				time_t curtime = replay.pheader.seed;
 				repinfo.append(fmt::format(L"{:%Y/%m/%d %H:%M:%S}\n", *std::localtime(&curtime)));
@@ -667,17 +758,25 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			}
 			case LISTBOX_SINGLEPLAY_LIST: {
 				mainGame->btnLoadSinglePlay->setEnabled(false);
+				mainGame->btnDeleteSinglePlay->setEnabled(false);
+				mainGame->btnRenameSinglePlay->setEnabled(false);
+				mainGame->btnOpenSinglePlay->setEnabled(false);
+				mainGame->btnShareSinglePlay->setEnabled(false);
 				int sel = mainGame->lstSinglePlayList->getSelected();
 				mainGame->stSinglePlayInfo->setText(L"");
-				mainGame->btnLoadSinglePlay->setText(gDataManager->GetSysString(1357).data());
-				if(sel == -1)
-					break;
 				if(mainGame->lstSinglePlayList->isDirectory(sel)) {
 					mainGame->btnLoadSinglePlay->setText(gDataManager->GetSysString(1359).data());
 					mainGame->btnLoadSinglePlay->setEnabled(true);
 					break;
-				}
+				} else
+					mainGame->btnLoadSinglePlay->setText(gDataManager->GetSysString(1357).data());
+				if(sel == -1)
+					break;
 				mainGame->btnLoadSinglePlay->setEnabled(mainGame->coreloaded);
+				mainGame->btnDeleteSinglePlay->setEnabled(true);
+				mainGame->btnRenameSinglePlay->setEnabled(true);
+				mainGame->btnOpenSinglePlay->setEnabled(true);
+				mainGame->btnShareSinglePlay->setEnabled(true);
 				const wchar_t* name = mainGame->lstSinglePlayList->getListItem(mainGame->lstSinglePlayList->getSelected(), true);
 				mainGame->stSinglePlayInfo->setText(mainGame->ReadPuzzleMessage(name).data());
 				break;
@@ -695,7 +794,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					auto parsed = DuelClient::ResolveServer(mainGame->ebJoinHost->getText(), mainGame->ebJoinPort->getText());
 					gGameConfig->lasthost = mainGame->ebJoinHost->getText();
 					gGameConfig->lastport = mainGame->ebJoinPort->getText();
-					mainGame->dInfo.secret.pass = BufferIO::EncodeUTF8s(mainGame->ebJoinPass->getText());
+					mainGame->dInfo.secret.pass = mainGame->ebJoinPass->getText();
 					if(DuelClient::StartClient(parsed.first, parsed.second, 0, false)) {
 						mainGame->btnCreateHost->setEnabled(false);
 						mainGame->btnJoinHost->setEnabled(false);
@@ -718,13 +817,16 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			case LISTBOX_SINGLEPLAY_LIST: {
 				if(!mainGame->btnLoadSinglePlay->isEnabled())
 					break;
-				if(mainGame->lstSinglePlayList->isDirectory(mainGame->lstSinglePlayList->getSelected()))
-					mainGame->lstSinglePlayList->enterDirectory(mainGame->lstSinglePlayList->getSelected());
+				const auto& list = mainGame->lstSinglePlayList;
+				const auto selected = list->getSelected();
+				if(selected == -1)
+					break;
+				if(list->isDirectory(selected))
+					list->enterDirectory(selected);
 				else {
-					if(!open_file && (mainGame->lstSinglePlayList->getSelected() == -1))
-						break;
 					SingleMode::singleSignal.SetNoWait(false);
-					SingleMode::StartPlay();
+					SingleMode::DuelOptions opts(BufferIO::EncodeUTF8(list->getListItem(selected, true)));
+					SingleMode::StartPlay(std::move(opts));
 				}
 				break;
 			}
@@ -917,12 +1019,16 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			}
 			case COMBOBOX_BOT_DECK: {
 				gGameConfig->lastBot = mainGame->gBot.CurrentIndex();
+				mainGame->gBot.UpdateEngine();
+				break;
+			}
+			case COMBOBOX_BOT_ENGINE: {
 				mainGame->gBot.UpdateDescription();
 				break;
 			}
 			case SERVER_CHOICE: {
 				ServerLobby::RefreshRooms();
-				break;
+				return false;
 			}
 			default: break;
 			}
@@ -1010,7 +1116,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 						ClickButton(mainGame->btnLoadReplay);
 						return true;
 					} else if(extension == L"pem" || extension == L"cer" || extension == L"crt") {
-						gGameConfig->ssl_certificate_path = BufferIO::EncodeUTF8s(to_open_file);
+						gGameConfig->ssl_certificate_path = BufferIO::EncodeUTF8(to_open_file);
 					}
 					to_open_file.clear();
 				}

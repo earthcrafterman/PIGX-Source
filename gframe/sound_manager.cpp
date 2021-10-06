@@ -74,7 +74,12 @@ void SoundManager::RefreshBGMList() {
 #endif
 }
 void SoundManager::RefreshSoundsList() {
+#ifdef BACKEND
+#if defined(_MSC_VER) && _MSC_VER == 1900
+	static const std::pair<SFX, epro::path_stringview> fx[] = {
+#else
 	static constexpr std::pair<SFX, epro::path_stringview> fx[] = {
+#endif
 		{SUMMON, EPRO_TEXT("./sound/summon.{}")},
 		{SPECIAL_SUMMON, EPRO_TEXT("./sound/specialsummon.{}")},
 		{ACTIVATE, EPRO_TEXT("./sound/activate.{}")},
@@ -110,6 +115,7 @@ void SoundManager::RefreshSoundsList() {
 			}
 		}
 	}
+#endif
 }
 void SoundManager::RefreshBGMDir(epro::path_stringview path, BGM scene) {
 #ifdef BACKEND
@@ -122,7 +128,11 @@ void SoundManager::RefreshBGMDir(epro::path_stringview path, BGM scene) {
 }
 void SoundManager::RefreshChantsList() {
 #ifdef BACKEND
+#if defined(_MSC_VER) && _MSC_VER == 1900
+	static const std::pair<CHANT, epro::path_stringview> types[] = {
+#else
 	static constexpr std::pair<CHANT, epro::path_stringview> types[] = {
+#endif
 		{CHANT::SUMMON,    EPRO_TEXT("summon")},
 		{CHANT::ATTACK,    EPRO_TEXT("attack")},
 		{CHANT::ACTIVATE,  EPRO_TEXT("activate")}
@@ -180,36 +190,26 @@ bool SoundManager::PlayChant(CHANT chant, uint32_t code) {
 }
 void SoundManager::SetSoundVolume(double volume) {
 #ifdef BACKEND
-	if(!mixer)
-		return;
-	mixer->SetSoundVolume(volume);
+	if(mixer)
+		mixer->SetSoundVolume(volume);
 #endif
 }
 void SoundManager::SetMusicVolume(double volume) {
 #ifdef BACKEND
-	if(!mixer)
-		return;
-	mixer->SetMusicVolume(volume);
+	if(mixer)
+		mixer->SetMusicVolume(volume);
 #endif
 }
 void SoundManager::EnableSounds(bool enable) {
 #ifdef BACKEND
-	if(!mixer)
-		return;
-	soundsEnabled = enable;
-	if(!musicEnabled) {
+	if(mixer && !(soundsEnabled = enable))
 		mixer->StopSounds();
-	}
 #endif
 }
 void SoundManager::EnableMusic(bool enable) {
 #ifdef BACKEND
-	if(!mixer)
-		return;
-	musicEnabled = enable;
-	if(!musicEnabled) {
+	if(mixer && !(musicEnabled = enable))
 		mixer->StopMusic();
-	}
 #endif
 }
 void SoundManager::StopSounds() {

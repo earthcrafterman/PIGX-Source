@@ -82,19 +82,20 @@ private:
 	// Initialized with GIT_OK (0), changed to cancel fetching
 	std::atomic<int> fetchReturnValue{0};
 
-	void AddRepo(GitRepo repo);
+	void AddRepo(GitRepo&& repo);
 	void SetRepoPercentage(const std::string& path, int percent);
 	
 	// Will be started on a new thread
 	void CloneOrUpdateTask();
 	
 	// libgit2 Callbacks stuff
-	struct FetchCbPayload
+	struct GitCbPayload
 	{
 		RepoManager* rm;
 		const std::string& path;
 	};
 	static int FetchCb(const git_indexer_progress* stats, void* payload);
+	static void CheckoutCb(const char* path, size_t completed_steps, size_t total_steps, void* payload);
 };
 
 extern RepoManager* gRepoManager;

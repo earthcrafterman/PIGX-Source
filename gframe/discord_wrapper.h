@@ -10,7 +10,7 @@ public:
 		uint32_t game_id;
 		uint32_t server_address;
 		uint16_t server_port;
-		std::string pass;
+		std::wstring pass;
 	};
 	enum PresenceType {
 		MENU,
@@ -32,7 +32,6 @@ public:
 	bool connected{ false };
 	void Check();
 private:
-	int64_t start{ 0 };
 	int previous_gameid{ 0 };
 	bool running{ false };
 	char secret_buf[128];

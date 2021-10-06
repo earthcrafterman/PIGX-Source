@@ -1,7 +1,6 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
-#include <direct.h> //_getcwd
-#include <Tchar.h> //_tgetcwd
+#include <Tchar.h> //_tmain
 #else
 #define _tmain main
 #include <unistd.h>
@@ -23,7 +22,7 @@
 #include "log.h"
 #include "joystick_wrapper.h"
 #include "utils_gui.h"
-#ifdef __APPLE__
+#ifdef EDOPRO_MACOS
 #include "osx_menu.h"
 #endif
 
@@ -59,16 +58,19 @@ inline void SetCheckbox(irr::gui::IGUICheckBox* chk, bool state) {
 	TriggerEvent(chk, irr::gui::EGET_CHECKBOX_CHANGED);
 }
 
-#define PARAM_CHECK(x) ((wchar_t)argv[i][1] == (wchar_t)x)
+#define PARAM_CHECK(x) (parameter[1] == EPRO_TEXT(x))
 #define RUN_IF(x,expr) (PARAM_CHECK(x)) {i++; if(i < argc) {expr;} continue;}
-#define SET_TXT(elem) ygo::mainGame->elem->setText(ygo::Utils::ToUnicodeIfNeeded(argv[i]).data())
+#define SET_TXT(elem) ygo::mainGame->elem->setText(ygo::Utils::ToUnicodeIfNeeded(parameter).data())
 
 void CheckArguments(int argc, epro::path_char* argv[]) {
 	bool keep_on_return = false;
 	for(int i = 1; i < argc; ++i) {
-		if((wchar_t)argv[i][0] == '-' && argv[i][1]) {
+		epro::path_stringview parameter = argv[i];
+		if(parameter.size() < 2)
+			continue;
+		if(parameter[0] == EPRO_TEXT('-')) {
 			// Extra database
-			if RUN_IF('e', ygo::gDataManager->LoadDB(argv[i]))
+			if RUN_IF('e', if(ygo::gDataManager->LoadDB(parameter)) ygo::WindBot::AddDatabase(parameter) )
 				// Nickname
 			else if RUN_IF('n', SET_TXT(ebNickName))
 				// Host address
@@ -130,12 +132,11 @@ void CheckArguments(int argc, epro::path_char* argv[]) {
 					ClickButton(ygo::mainGame->btnLoadSinglePlay);
 				break;
 			}
-		} else if(argc == 2 && argv[1][0] && argv[1][1] && argv[1][2] && argv[1][3]) {
-			epro::path_string parameter = argv[1];
-			auto extension = ygo::Utils::GetFileExtension(parameter);
+		} else if(argc == 2 && parameter.size() >= 4) {
+			const auto extension = ygo::Utils::GetFileExtension(parameter);
 			if(extension == EPRO_TEXT("ydk")) {
 				open_file = true;
-				open_file_name = std::move(parameter);
+				open_file_name = epro::path_string{ parameter };
 				keep_on_return = true;
 				exit_on_return = false;
 				ClickButton(ygo::mainGame->btnDeckEdit);
@@ -143,7 +144,7 @@ void CheckArguments(int argc, epro::path_char* argv[]) {
 			}
 			if(extension == EPRO_TEXT("yrp") || extension == EPRO_TEXT("yrpx")) {
 				open_file = true;
-				open_file_name = std::move(parameter);
+				open_file_name = epro::path_string{ parameter };
 				keep_on_return = true;
 				exit_on_return = false;
 				ClickButton(ygo::mainGame->btnReplayMode);
@@ -152,7 +153,7 @@ void CheckArguments(int argc, epro::path_char* argv[]) {
 			}
 			if(extension == EPRO_TEXT("lua")) {
 				open_file = true;
-				open_file_name = std::move(parameter);
+				open_file_name = epro::path_string{ parameter };
 				keep_on_return = true;
 				exit_on_return = false;
 				ClickButton(ygo::mainGame->btnSingleMode);
@@ -185,8 +186,25 @@ inline void ThreadsCleanup() {
 #endif
 }
 
+//clang below version 11 (llvm version 8) has a bug with brace class initialization
+//where it can't properly deduce the destructors of its members
+//https://reviews.llvm.org/D45898
+//https://bugs.llvm.org/show_bug.cgi?id=28280
+//add a workaround to construct the game object indirectly
+//to avoid constructing it with brace initialization
+#if defined(__clang_major__) && __clang_major__ <= 10
+class Game {
+	ygo::Game game;
+public:
+	Game() :game() {};
+	ygo::Game* operator&() { return &game; }
+};
+#else
+using Game = ygo::Game;
+#endif
+
 int _tmain(int argc, epro::path_char* argv[]) {
-	epro::path_stringview dest{};
+	epro::path_stringview dest;
 	int skipped = 0;
 	if(argc > 2 && (argv[1] == EPRO_TEXT("from_discord"_sv) || argv[1] == EPRO_TEXT("-C"_sv))) {
 		dest = argv[2];
@@ -194,10 +212,13 @@ int _tmain(int argc, epro::path_char* argv[]) {
 	} else
 		dest = ygo::Utils::GetExeFolder();
 	if(!ygo::Utils::ChangeDirectory(dest)) {
-		ygo::ErrorLog("failed to change directory");
-		fmt::print("failed to change directory\n");
+		const auto err = fmt::format("failed to change directory to: {}", ygo::Utils::ToUTF8IfNeeded(dest));
+		ygo::ErrorLog(err);
+		fmt::print("{}\n", err);
+		ygo::GUIUtils::ShowErrorWindow("Initialization fail", err);
+		return EXIT_FAILURE;
 	}
-	if(argc >= 2 && argv[1] == EPRO_TEXT("show_changelog"_sv))
+	if(argc >= (2 + skipped) && argv[1 + skipped] == EPRO_TEXT("show_changelog"_sv))
 		show_changelog = true;
 	ThreadsStartup();
 #ifndef _WIN32
@@ -205,7 +226,7 @@ int _tmain(int argc, epro::path_char* argv[]) {
 #endif //_WIN32
 	ygo::ClientUpdater updater;
 	ygo::gClientUpdater = &updater;
-	std::shared_ptr<ygo::DataHandler> data = nullptr;
+	std::shared_ptr<ygo::DataHandler> data{ nullptr };
 	try {
 		data = std::make_shared<ygo::DataHandler>(dest);
 		ygo::gImageDownloader = data->imageDownloader.get();
@@ -215,7 +236,7 @@ int _tmain(int argc, epro::path_char* argv[]) {
 		ygo::gRepoManager = data->gitManager.get();
 		ygo::gdeckManager = data->deckManager.get();
 	}
-	catch(std::exception e) {
+	catch(const std::exception& e) {
 		epro::stringview text(e.what());
 		ygo::ErrorLog(text);
 		fmt::print("{}\n", text);
@@ -229,18 +250,18 @@ int _tmain(int argc, epro::path_char* argv[]) {
 	if(!data->configs->showConsole)
 		FreeConsole();
 #endif
-#ifdef __APPLE__
+#ifdef EDOPRO_MACOS
 	EDOPRO_SetupMenuBar([]() {
 		ygo::gGameConfig->fullscreen = !ygo::gGameConfig->fullscreen;
 		ygo::mainGame->gSettings.chkFullscreen->setChecked(ygo::gGameConfig->fullscreen);
 	});
 #endif
 	srand(time(0));
-	std::unique_ptr<JWrapper> joystick;
-	bool reset = false;
+	std::unique_ptr<JWrapper> joystick{ nullptr };
 	bool firstlaunch = true;
+	bool reset = false;
 	do {
-		ygo::Game _game{};
+		Game _game{};
 		ygo::mainGame = &_game;
 		if(data->tmp_device) {
 			ygo::mainGame->device = data->tmp_device;
@@ -264,8 +285,8 @@ int _tmain(int argc, epro::path_char* argv[]) {
 			CheckArguments(argc - skipped, argv + skipped);
 		}
 		reset = ygo::mainGame->MainLoop();
+		data->tmp_device = ygo::mainGame->device;
 		if(reset) {
-			data->tmp_device = ygo::mainGame->device;
 			data->tmp_device->setEventReceiver(nullptr);
 			/*the gles drivers have an additional cache, that isn't cleared when the textures are removed,
 			since it's not a big deal clearing them, as they'll be reused, they aren't cleared*/
@@ -276,6 +297,7 @@ int _tmain(int argc, epro::path_char* argv[]) {
 			data->tmp_device->getGUIEnvironment()->clear();
 		}
 	} while(reset);
+	data->tmp_device->drop();
 	ThreadsCleanup();
 	return EXIT_SUCCESS;
 }

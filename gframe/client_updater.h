@@ -15,7 +15,7 @@ struct UnzipperPayload {
 	void* payload;
 };
 
-using update_callback = std::function<void(int percentage, int cur, int tot, const char* filename, bool is_new, void* payload)>;
+using update_callback = void(*)(int percentage, int cur, int tot, const char* filename, bool is_new, void* payload);
 
 namespace ygo {
 
@@ -33,6 +33,9 @@ public:
 	bool UpdateDownloaded() {
 		return downloaded;
 	}
+	bool UpdateFailed() {
+		return failed;
+	}
 #ifdef _WIN32
 	using lock_type = void*;
 #else
@@ -48,15 +51,23 @@ private:
 		std::string md5;
 	};
 	std::vector<DownloadInfo> update_urls;
+#ifdef __ANDROID__
+	static constexpr bool Lock{ true };
+#else
 	lock_type Lock{ 0 };
+#endif
 	std::atomic<bool> has_update{ false };
 	std::atomic<bool> downloaded{ false };
+	std::atomic<bool> failed{ false };
 	std::atomic<bool> downloading{ false };
 #else
 	bool HasUpdate() {
 		return false;
 	}
 	bool UpdateDownloaded() {
+		return false;
+	}
+	bool UpdateFailed() {
 		return false;
 	}
 #endif

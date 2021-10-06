@@ -33,7 +33,7 @@ void GenericDuel::Chat(DuelPlayer* dp, void* pdata, int len) {
 	STOC_Chat2 scc;
 	memcpy(scc.client_name, dp->name, 40);
 	uint16_t* msg = (uint16_t*)pdata;
-	int msglen = BufferIO::CopyWStr(msg, scc.msg, 256);
+	int msglen = BufferIO::CopyStr(msg, scc.msg, 256);
 	if(dp->type >= NETPLAYER_TYPE_OBSERVER) {
 		scc.type = STOC_Chat2::PTYPE_OBS;
 		NetServer::SendBufferToPlayer(nullptr, STOC_CHAT_2, &scc, 4 + 40 + (msglen * 2));
@@ -174,7 +174,7 @@ void GenericDuel::JoinGame(DuelPlayer* dp, CTOS_JoinGame* pkt, bool is_creater) 
 			return;
 		}
 		wchar_t jpass[20];
-		BufferIO::CopyWStr(pkt->pass, jpass, 20);
+		BufferIO::DecodeUTF16(pkt->pass, jpass, 20);
 		if(wcscmp(jpass, pass)) {
 			JoinError scem{ JoinError::JERR_PASSWORD };
 			NetServer::SendPacketToPlayer(dp, STOC_ERROR_MSG, scem);
@@ -195,7 +195,7 @@ void GenericDuel::JoinGame(DuelPlayer* dp, CTOS_JoinGame* pkt, bool is_creater) 
 			std::swap(players.home, players.opposing);
 		IteratePlayers([this,&dp](DuelPlayer* dueler) {
 			STOC_HS_PlayerEnter scpe;
-			BufferIO::CopyWStr(dueler->name, scpe.name, 20);
+			BufferIO::CopyStr(dueler->name, scpe.name, 20);
 			scpe.pos = GetPos(dueler);
 			NetServer::SendPacketToPlayer(dp, STOC_HS_PLAYER_ENTER, scpe);
 		});
@@ -216,7 +216,7 @@ void GenericDuel::JoinGame(DuelPlayer* dp, CTOS_JoinGame* pkt, bool is_creater) 
 	sctc.type = (host_player == dp) ? 0x10 : 0;
 	if(CheckFree(players.home) || CheckFree(players.opposing)) {
 		STOC_HS_PlayerEnter scpe;
-		BufferIO::CopyWStr(dp->name, scpe.name, 20);
+		BufferIO::CopyStr(dp->name, scpe.name, 20);
 		scpe.pos = GetFirstFree();
 		NetServer::SendPacketToPlayer(nullptr, STOC_HS_PLAYER_ENTER, scpe);
 		ResendToAll();
@@ -236,7 +236,7 @@ void GenericDuel::JoinGame(DuelPlayer* dp, CTOS_JoinGame* pkt, bool is_creater) 
 	NetServer::SendPacketToPlayer(dp, STOC_TYPE_CHANGE, sctc);
 	IteratePlayers([this,&dp](duelist& dueler) {
 		STOC_HS_PlayerEnter scpe;
-		BufferIO::CopyWStr(dueler.player->name, scpe.name, 20);
+		BufferIO::CopyStr(dueler.player->name, scpe.name, 20);
 		scpe.pos = GetPos(dueler);
 		NetServer::SendPacketToPlayer(dp, STOC_HS_PLAYER_ENTER, scpe);
 		if(dueler.ready) {
@@ -303,7 +303,7 @@ void GenericDuel::LeaveGame(DuelPlayer* dp) {
 					wbuf[2] = 0x4;
 					NetServer::SendBufferToPlayer(nullptr, STOC_GAME_MSG, wbuf, 3);
 					ResendToAll();
-					replay_stream.emplace_back((char*)wbuf, 3);
+					replay_stream.emplace_back((char*)wbuf, 2);
 					EndDuel();
 				}
 				NetServer::SendPacketToPlayer(nullptr, STOC_DUEL_END);
@@ -321,7 +321,7 @@ void GenericDuel::ToDuelist(DuelPlayer* dp) {
 	if(dp->type == NETPLAYER_TYPE_OBSERVER) {
 		observers.erase(dp);
 		STOC_HS_PlayerEnter scpe;
-		BufferIO::CopyWStr(dp->name, scpe.name, 20);
+		BufferIO::CopyStr(dp->name, scpe.name, 20);
 		dp->type = pos;
 		scpe.pos = dp->type;
 		SetAtPos(dp, scpe.pos);
@@ -787,7 +787,7 @@ void GenericDuel::Surrender(DuelPlayer* dp) {
 		wbuf[2] = 0;
 		NetServer::SendBufferToPlayer(nullptr, STOC_GAME_MSG, wbuf, 3);
 		ResendToAll();
-		replay_stream.emplace_back((char*)wbuf, 3);
+		replay_stream.emplace_back((char*)wbuf, 2);
 		match_result.push_back(1 - player);
 		DuelEndProc();
 		event_del(etimer);
@@ -1304,7 +1304,7 @@ void GenericDuel::EndDuel() {
 }
 void GenericDuel::WaitforResponse(uint8_t playerid) {
 	last_response = playerid;
-	static const uint8_t msg = MSG_WAITING;
+	static constexpr uint8_t msg = MSG_WAITING;
 	NetServer::SendPacketToPlayer(nullptr, STOC_GAME_MSG, msg);
 	IteratePlayers([&player=cur_player[playerid]](DuelPlayer* dueler) {
 		if(dueler != player)
@@ -1357,8 +1357,7 @@ void GenericDuel::RefreshLocation(uint8_t player, uint32_t flag, uint8_t locatio
 	auto buff = OCG_DuelQueryLocation(pduel, &len, { flag, player, location });
 	if(len == 0)
 		return;
-	char* a = (char*)buff;
-	CoreUtils::QueryStream query(a);
+	CoreUtils::QueryStream query((char*)buff);
 	query.GenerateBuffer(buffer, false);
 	replay_stream.emplace_back((char*)buffer.data(), buffer.size() - 1);
 	buffer.resize(3);
@@ -1385,8 +1384,7 @@ void GenericDuel::RefreshSingle(uint8_t player, uint8_t location, uint8_t sequen
 	auto buff = OCG_DuelQuery(pduel, &len, { flag, player, location, sequence });
 	if(buff == nullptr)
 		return;
-	char* a = (char*)buff;
-	CoreUtils::Query query(a);
+	CoreUtils::Query query((char*)buff);
 	query.GenerateBuffer(buffer, false, false);
 	replay_stream.emplace_back((char*)buffer.data(), buffer.size() - 1);
 	buffer.resize(4);
@@ -1434,7 +1432,7 @@ void GenericDuel::GenericTimer(evutil_socket_t fd, short events, void* arg) {
 			wbuf[2] = 0x3;
 			NetServer::SendBufferToPlayer(nullptr, STOC_GAME_MSG, wbuf, 3);
 			sd->IteratePlayers(NetServer::ReSendToPlayer);
-			sd->replay_stream.emplace_back((char*)wbuf, 3);
+			sd->replay_stream.emplace_back((char*)wbuf, 2);
 			sd->match_result.push_back(1 - player);
 			sd->DuelEndProc();
 		}

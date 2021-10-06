@@ -115,9 +115,9 @@ struct FadingUnit {
 class Game {
 
 public:
+	~Game();
 	bool Initialize();
 	bool MainLoop();
-	epro::path_string NoSkinLabel();
 	bool ApplySkin(const epro::path_string& skin, bool reload = false, bool firstrun = false);
 	void RefreshDeck(irr::gui::IGUIComboBox* cbDeck);
 	void RefreshLFLists();
@@ -167,6 +167,7 @@ public:
 	void ClearTextures();
 	void CloseDuelWindow();
 	void PopupMessage(epro::wstringview text, epro::wstringview caption = L"");
+	void PopupSaveWindow(epro::wstringview caption, epro::wstringview text, epro::wstringview hint);
 
 	uint8_t LocalPlayer(uint8_t player);
 	void UpdateDuelParam();
@@ -215,12 +216,12 @@ public:
 	irr::core::recti ResizePhaseHint(irr::s32 x, irr::s32 y, irr::s32 x2, irr::s32 y2, irr::s32 width);
 	irr::core::recti ResizeWinFromCenter(irr::s32 x, irr::s32 y, irr::s32 x2, irr::s32 y2, irr::s32 xoff = 0, irr::s32 yoff = 0);
 	irr::core::recti ResizeWin(irr::s32 x, irr::s32 y, irr::s32 x2, irr::s32 y2, bool chat = false);
-	void SetCentered(irr::gui::IGUIElement* elem);
+	void SetCentered(irr::gui::IGUIElement* elem, bool use_offset = true);
 	void ValidateName(irr::gui::IGUIElement* box);
 	
-	std::wstring ReadPuzzleMessage(const std::wstring& script_name);
+	std::wstring ReadPuzzleMessage(epro::wstringview script_name);
 	OCG_Duel SetupDuel(OCG_DuelOptions opts);
-	epro::path_string FindScript(epro::path_stringview script_name, MutexLockedIrrArchivedFile* retarchive = nullptr);
+	epro::path_string FindScript(epro::path_stringview script_name, irr::io::IReadFile** retarchive = nullptr);
 	std::vector<char> LoadScript(epro::stringview script_name);
 	bool LoadScript(OCG_Duel pduel, epro::stringview script_name);
 	static int ScriptReader(void* payload, OCG_Duel duel, const char* name);
@@ -314,6 +315,7 @@ public:
 	std::wstring queued_msg;
 	std::wstring queued_caption;
 	bool should_reload_skin;
+	bool should_refresh_hands;
 	//GUI
 	irr::gui::IGUIEnvironment* env;
 	irr::gui::CGUITTFont* guiFont;
@@ -474,12 +476,17 @@ public:
 	irr::gui::IGUIButton* btnRenameReplay;
 	irr::gui::IGUIButton* btnReplayCancel;
 	irr::gui::IGUIButton* btnExportDeck;
+	irr::gui::IGUIButton* btnShareReplay;
 	irr::gui::IGUIEditBox* ebRepStartTurn;
-	//single play
+	//puzzle mode
 	irr::gui::IGUIWindow* wSinglePlay;
 	irr::gui::CGUIFileSelectListBox* lstSinglePlayList;
 	irr::gui::IGUIStaticText* stSinglePlayInfo;
 	irr::gui::IGUIButton* btnLoadSinglePlay;
+	irr::gui::IGUIButton* btnDeleteSinglePlay;
+	irr::gui::IGUIButton* btnRenameSinglePlay;
+	irr::gui::IGUIButton* btnOpenSinglePlay;
+	irr::gui::IGUIButton* btnShareSinglePlay;
 	irr::gui::IGUIButton* btnSinglePlayCancel;
 	//hand
 	irr::gui::IGUIWindow* wHand;
@@ -575,6 +582,8 @@ public:
 	irr::gui::IGUIButton* btnHandTestSettings;
 	irr::gui::IGUIStaticText* stHandTestSettings;
 	irr::gui::IGUIWindow* wHandTest;
+	irr::gui::IGUIButton* btnYdkeManage;
+	irr::gui::IGUIWindow* wYdkeManage;
 	irr::gui::IGUICheckBox* chkHandTestNoOpponent;
 	irr::gui::IGUICheckBox* chkHandTestNoShuffle;
 	irr::gui::IGUIEditBox* ebHandTestStartHand;
@@ -631,11 +640,12 @@ public:
 	//sort type
 	irr::gui::IGUIStaticText* wSort;
 	irr::gui::IGUIComboBox* cbSortType;
-	//replay save
-	irr::gui::IGUIWindow* wReplaySave;
-	irr::gui::IGUIEditBox* ebRSName;
-	irr::gui::IGUIButton* btnRSYes;
-	irr::gui::IGUIButton* btnRSNo;
+	//file save
+	irr::gui::IGUIWindow* wFileSave;
+	irr::gui::IGUIStaticText* stFileSaveHint;
+	irr::gui::IGUIEditBox* ebFileSaveName;
+	irr::gui::IGUIButton* btnFileSaveYes;
+	irr::gui::IGUIButton* btnFileSaveNo;
 	//replay control
 	irr::gui::IGUIStaticText* wReplayControl;
 	irr::gui::IGUIButton* btnReplayStart;

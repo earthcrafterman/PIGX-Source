@@ -15,6 +15,7 @@
 #endif
 #include <algorithm>
 #include <cmath>
+#include "../game_config.h"
 
 namespace irr {
 namespace gui {
@@ -29,7 +30,7 @@ CGUICustomText::CGUICustomText(const wchar_t* text, bool border, IGUIEnvironment
 	OverrideColor(video::SColor(101, 255, 255, 255)), BGColor(video::SColor(101, 210, 210, 210)), animationWaitStart(0),
 	OverrideFont(nullptr), LastBreakFont(nullptr), scrText(nullptr), prev_time(0), scrolling(NO_SCROLLING), maxFrame(0), curFrame(0.0f),
 	frameTimer(0.0f), forcedSteps(0), forcedStepsRatio(0.0f), animationStep(0), animationWaitEnd(0), increasingFrame(false),
-	waitingEndFrame(false), ScrollWidth(0), ScrollRatio(0.0f), TouchControl(false), was_pressed(false), prev_position(core::position2di(0, 0)) {
+	waitingEndFrame(false), ScrollWidth(0), ScrollRatio(0.0f), was_pressed(false), prev_position(core::position2di(0, 0)) {
 #ifdef _DEBUG
 	setDebugName("CGUICustomText");
 #endif
@@ -188,7 +189,7 @@ void CGUICustomText::draw() {
 					frameRect.UpperLeftCorner.Y -= (s32)round((float)curFrame * animationStep);
 
 				font->draw(Text.c_str(), frameRect,
-						   OverrideColorEnabled ? OverrideColor : skin->getColor(isEnabled() ? EGDC_BUTTON_TEXT : EGDC_GRAY_TEXT),
+						   getActiveColor(),
 						   HAlign == EGUIA_CENTER && !autoscrolling && hasHorizontalAutoscrolling(), VAlign == EGUIA_CENTER && !autoscrolling && hasVerticalAutoscrolling(), (RestrainTextInside ? &AbsoluteClippingRect : NULL));
 			} else {
 				if(font != LastBreakFont)
@@ -221,7 +222,7 @@ void CGUICustomText::draw() {
 							font->getDimension(BrokenText[i].c_str()).Width;
 					}
 					font->draw(BrokenText[i].c_str(), r,
-							   OverrideColorEnabled ? OverrideColor : skin->getColor(isEnabled() ? EGDC_BUTTON_TEXT : EGDC_GRAY_TEXT),
+							   getActiveColor(),
 							   HAlign == EGUIA_CENTER, false, (RestrainTextInside ? &AbsoluteClippingRect : NULL));
 				}
 			}
@@ -328,6 +329,15 @@ video::SColor CGUICustomText::getOverrideColor() const {
 	return OverrideColor;
 }
 
+irr::video::SColor CGUICustomText::getActiveColor() const
+{
+	if ( OverrideColorEnabled )
+		return OverrideColor;
+	IGUISkin* skin = Environment->getSkin();
+	if (skin)
+		return OverrideColorEnabled ? OverrideColor : skin->getColor(isEnabled() ? EGDC_BUTTON_TEXT : EGDC_GRAY_TEXT);
+	return OverrideColor;
+}
 
 //! Sets if the static text should use the overide color or the
 //! color in the gui skin.
@@ -374,7 +384,10 @@ void CGUICustomText::breakText() {
 		scrText->setEnabled(false);
 		if(getTextHeight() > RelativeRect.getHeight()) {
 			scrText->setEnabled(true);
-			if(!TouchControl) {
+#ifdef __ANDROID__
+			if(ygo::gGameConfig->native_mouse)
+#endif
+			{
 				scrText->setVisible(true);
 				breakText(true);
 			}
