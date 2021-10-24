@@ -2801,7 +2801,6 @@ void Game::ReloadCBCardType() {
 	cbCardType->addItem(gDataManager->GetSysString(1312).data());
 	cbCardType->addItem(gDataManager->GetSysString(1313).data());
 	cbCardType->addItem(gDataManager->GetSysString(1314).data());
-	cbCardType->addItem(gDataManager->GetSysString(1077).data());
 }
 void Game::ReloadCBCardType2() {
 	cbCardType2->clear();
@@ -2823,6 +2822,7 @@ void Game::ReloadCBCardType2() {
 		cbCardType2->addItem(gDataManager->GetSysString(1059).data(), TYPE_MONSTER + TYPE_SPIRIT);
 		cbCardType2->addItem(gDataManager->GetSysString(1071).data(), TYPE_MONSTER + TYPE_FLIP);
 		cbCardType2->addItem(gDataManager->GetSysString(1072).data(), TYPE_MONSTER + TYPE_TOON);
+		cbCardType2->addItem(gDataManager->GetSysString(1075).data(), TYPE_MONSTER + TYPE_SPSUMMON);
 		break;
 	case 2:
 		cbCardType2->addItem(gDataManager->GetSysString(1080).data(), 0);
@@ -2837,8 +2837,8 @@ void Game::ReloadCBCardType2() {
 		cbCardType2->addItem(gDataManager->GetSysString(1080).data(), 0);
 		cbCardType2->addItem(gDataManager->GetSysString(1054).data(), TYPE_TRAP);
 		cbCardType2->addItem(gDataManager->GetSysString(1067).data(), TYPE_TRAP + TYPE_CONTINUOUS);
-		cbCardType2->addItem(gDataManager->GetSysString(1068).data(), TYPE_TRAP + TYPE_COUNTER);
-		cbCardType2->addItem(gDataManager->GetSysString(1070).data(), TYPE_TRAP + TYPE_EQUIP);
+		cbCardType2->addItem(gDataManager->GetSysString(1070).data(), TYPE_TRAP + TYPE_COUNTER);
+		cbCardType2->addItem(gDataManager->GetSysString(1068).data(), TYPE_TRAP + TYPE_EQUIP);
 		break;
 	}
 }
