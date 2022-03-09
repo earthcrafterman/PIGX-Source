@@ -223,7 +223,7 @@ DeckError DeckManager::CheckDeck(Deck& deck, uint32_t lfhash, DuelAllowedCards a
 	if(TypeCount(deck.main, forbiddentypes) > 0 || TypeCount(deck.extra, forbiddentypes) > 0 || TypeCount(deck.side, forbiddentypes) > 0)
 		return ret.type = DeckError::FORBTYPE, ret;
 	bool speed = mainGame->extra_rules & DECK_LIMIT_20;
-	size_t minmain = 30, maxmain = 60, maxextra = 15, maxside = 15;
+	size_t minmain = 40, maxmain = 60, maxextra = 15, maxside = 15;
 	if(doubled){
 		if(speed){
 			maxextra = 10;
