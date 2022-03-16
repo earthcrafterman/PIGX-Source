@@ -2839,6 +2839,7 @@ void Game::ReloadCBCardType2() {
 		cbCardType2->addItem(gDataManager->GetSysString(1067).data(), TYPE_TRAP + TYPE_CONTINUOUS);
 		cbCardType2->addItem(gDataManager->GetSysString(1070).data(), TYPE_TRAP + TYPE_COUNTER);
 		cbCardType2->addItem(gDataManager->GetSysString(1068).data(), TYPE_TRAP + TYPE_EQUIP);
+		cbCardType2->addItem(gDataManager->GetSysString(1057).data(), TYPE_TRAP + TYPE_RITUAL);
 		break;
 	}
 }
