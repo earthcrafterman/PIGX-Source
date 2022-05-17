@@ -485,7 +485,7 @@ void DuelClient::HandleSTOCPacketLan2(char* data, uint32_t len) {
 		case ERROR_TYPE::DECKERROR: {
 			auto pkt = BufferIO::getStruct<DeckError>(pdata, len);
 			std::lock_guard<std::mutex> lock(mainGame->gMutex);
-			int mainmin = 40, mainmax = 60, extramax = 15, sidemax = 15;
+			int mainmin = 60, mainmax = 60, extramax = 30, sidemax = 15;
 			uint32_t code = 0, curcount = 0;
 			DeckError::DERR_TYPE flag = DeckError::NONE;
 			if(mainGame->dInfo.compat_mode) {

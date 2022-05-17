@@ -1336,7 +1336,7 @@ bool DeckBuilder::push_extra(CardDataC* pointer, int seq, bool forced) {
 	if(!(pointer->type & (TYPE_FUSION | TYPE_SYNCHRO | TYPE_XYZ | TYPE_LINK)) || pointer->type == (TYPE_SPELL | TYPE_LINK))
 		return false;
 	auto& container = gdeckManager->current_deck.extra;
-	if(!mainGame->is_siding && !forced && (int)container.size() >= 15)
+	if(!mainGame->is_siding && !forced && (int)container.size() >= 30)
 		return false;
 	if(seq >= 0 && seq < (int)container.size())
 		container.insert(container.begin() + seq, pointer);
