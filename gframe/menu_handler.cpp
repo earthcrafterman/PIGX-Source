@@ -21,6 +21,7 @@
 #include <IGUIComboBox.h>
 #include <IGUIContextMenu.h>
 #include <IGUIEditBox.h>
+#include <IGUIScrollBar.h>
 #include <IGUIStaticText.h>
 #include <IGUITabControl.h>
 #include <IGUITable.h>
@@ -30,9 +31,9 @@ namespace ygo {
 
 static void UpdateDeck() {
 	gGameConfig->lastdeck = mainGame->cbDeckSelect->getItem(mainGame->cbDeckSelect->getSelected());
-	const auto& deck = gdeckManager->current_deck;
-	char deckbuf[0xf000];
-	char* pdeck = deckbuf;
+	const auto& deck = mainGame->deckBuilder.GetCurrentDeck();
+	uint8_t deckbuf[0xf000];
+	auto* pdeck = deckbuf;
 	static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 2;
 	const auto totsize = deck.main.size() + deck.extra.size() + deck.side.size();
 	if(totsize > max_deck_size)
@@ -46,18 +47,15 @@ static void UpdateDeck() {
 	for(const auto& pcard : deck.side)
 		BufferIO::Write<uint32_t>(pdeck, pcard->code);
 	DuelClient::SendBufferToServer(CTOS_UPDATE_DECK, deckbuf, pdeck - deckbuf);
-	gdeckManager->sent_deck = gdeckManager->current_deck;
+	gdeckManager->sent_deck = mainGame->deckBuilder.GetCurrentDeck();
 }
 static void LoadReplay() {
 	auto& replay = ReplayMode::cur_replay;
 	if(open_file) {
 		bool res = replay.OpenReplay(open_file_name);
 		open_file = false;
-		if(!res || (replay.pheader.id == REPLAY_YRP1 && !mainGame->coreloaded)) {
-			if(exit_on_return)
-				mainGame->device->closeDevice();
+		if(!res || (replay.pheader.id == REPLAY_YRP1 && !mainGame->coreloaded))
 			return;
-		}
 	} else {
 		if(mainGame->lstReplayList->getSelected() == -1)
 			return;
@@ -118,8 +116,6 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 		   && prev_operation != ACTION_TRY_WAYLAND
 #endif
 		   )
-			break;
-		if(mainGame->wCustomRules->isVisible() && id != BUTTON_CUSTOM_RULE_OK && ((id < CHECKBOX_OBSOLETE || id > TCG_SEGOC_FIRSTTRIGGER) && id != COMBOBOX_DUEL_RULE))
 			break;
 		if(mainGame->wQuery->isVisible() && id != BUTTON_YES && id != BUTTON_NO) {
 			mainGame->wQuery->getParent()->bringToFront(mainGame->wQuery);
@@ -217,8 +213,6 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			case BUTTON_JOIN_CANCEL: {
 				mainGame->HideElement(mainGame->wLanWindow);
 				mainGame->ShowElement(mainGame->wMainMenu);
-				if(exit_on_return)
-					mainGame->device->closeDevice();
 				break;
 			}
 			case BUTTON_LAN_REFRESH: {
@@ -257,60 +251,6 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 			}
 			case BUTTON_RULE_OK: {
 				mainGame->HideElement(mainGame->wRules);
-				break;
-			}
-			case BUTTON_CUSTOM_RULE: {
-				const auto tcg = mainGame->duel_param & DUEL_TCG_SEGOC_FIRSTTRIGGER;
-#define CHECK(MR) case (MR - 1):{ mainGame->duel_param = DUEL_MODE_MR##MR; mainGame->forbiddentypes = DUEL_MODE_MR##MR##_FORB; break; }
-				switch (mainGame->cbDuelRule->getSelected()) {
-				CHECK(1)
-				CHECK(2)
-				CHECK(3)
-				CHECK(4)
-				CHECK(5)
-				case 5:	{
-					mainGame->duel_param = DUEL_MODE_SPEED;
-					mainGame->forbiddentypes = 0;
-					break;
-				}
-				case 6:	{
-					mainGame->duel_param = DUEL_MODE_RUSH;
-					mainGame->forbiddentypes = 0;
-					break;
-				}
-				case 7:	{
-					mainGame->duel_param = DUEL_MODE_GOAT;
-					mainGame->forbiddentypes = DUEL_MODE_MR1_FORB;
-					break;
-				}
-				}
-#undef CHECK
-				mainGame->duel_param |= tcg;
-				for (int i = 0; i < sizeofarr(mainGame->chkCustomRules); ++i) {
-					bool set = false;
-					if(i == 19)
-						set = mainGame->duel_param & DUEL_USE_TRAPS_IN_NEW_CHAIN;
-					else if(i == 20)
-						set = mainGame->duel_param & DUEL_6_STEP_BATLLE_STEP;
-					else if(i == 21)
-						set = mainGame->duel_param & DUEL_TRIGGER_WHEN_PRIVATE_KNOWLEDGE;
-					else if(i > 21)
-						set = mainGame->duel_param & 0x100ULL << (i - 3);
-					else
-						set = mainGame->duel_param & 0x100ULL << i;
-					mainGame->chkCustomRules[i]->setChecked(set);
-					if(i == 3)
-						mainGame->chkCustomRules[4]->setEnabled(set);
-				}
-				constexpr uint32_t limits[] = { TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
-				for (int i = 0; i < sizeofarr(mainGame->chkTypeLimit); ++i)
-						mainGame->chkTypeLimit[i]->setChecked(mainGame->forbiddentypes & limits[i]);
-				mainGame->PopupElement(mainGame->wCustomRules);
-				break;
-			}
-			case BUTTON_CUSTOM_RULE_OK: {
-				mainGame->UpdateDuelParam();
-				mainGame->HideElement(mainGame->wCustomRules);
 				break;
 			}
 			case BUTTON_HOST_CONFIRM: {
@@ -423,8 +363,6 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				else
 					mainGame->ShowElement(mainGame->wLanWindow);
 				mainGame->wChat->setVisible(false);
-				if(exit_on_return)
-					mainGame->device->closeDevice();
 				break;
 			}
 			case BUTTON_REPLAY_MODE: {
@@ -650,7 +588,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				case ACTION_TRY_WAYLAND:
 					gGameConfig->useWayland = 0;
 					mainGame->SaveConfig();
-					Utils::Reboot();
+					break;
 #endif
 				case ACTION_UPDATE_PROMPT:
 				case ACTION_SHOW_CHANGELOG:
@@ -949,14 +887,67 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				ServerLobby::FillOnlineRooms();
 			break;
 		}
-		case irr::gui::EGET_COMBO_BOX_CHANGED: {
-			switch (id) {
-			case COMBOBOX_HOST_LFLIST: {
-				int selected = mainGame->cbHostLFList->getSelected();
-				if (selected < 0) break;
-				LFList* lflist = gdeckManager->GetLFList(mainGame->cbHostLFList->getItemData(selected));
+		case irr::gui::EGET_TAB_CHANGED: {
+			switch(id) {
+			case TAB_CONTROL_CREATE_HOST: {
+				auto elem = static_cast<irr::gui::IGUITabControl*>(event.GUIEvent.Caller);
+				auto curTab = elem->getActiveTab();
+				if(curTab == 0) {
+					mainGame->UpdateDuelParam();
+				} else {
+					const auto tcg = mainGame->duel_param & DUEL_TCG_SEGOC_FIRSTTRIGGER;
+	#define CHECK(MR) case (MR - 1):{ mainGame->duel_param = DUEL_MODE_MR##MR; mainGame->forbiddentypes = DUEL_MODE_MR##MR##_FORB; break; }
+					switch (mainGame->cbDuelRule->getSelected()) {
+					CHECK(1)
+					CHECK(2)
+					CHECK(3)
+					CHECK(4)
+					CHECK(5)
+					case 5:	{
+						mainGame->duel_param = DUEL_MODE_SPEED;
+						mainGame->forbiddentypes = 0;
+						break;
+					}
+					case 6:	{
+						mainGame->duel_param = DUEL_MODE_RUSH;
+						mainGame->forbiddentypes = 0;
+						break;
+					}
+					case 7:	{
+						mainGame->duel_param = DUEL_MODE_GOAT;
+						mainGame->forbiddentypes = DUEL_MODE_MR1_FORB;
+						break;
+					}
+					}
+	#undef CHECK
+					mainGame->duel_param |= tcg;
+					for (int i = 0; i < sizeofarr(mainGame->chkCustomRules); ++i) {
+						bool set = false;
+						if(i == 19)
+							set = mainGame->duel_param & DUEL_USE_TRAPS_IN_NEW_CHAIN;
+						else if(i == 20)
+							set = mainGame->duel_param & DUEL_6_STEP_BATLLE_STEP;
+						else if(i == 21)
+							set = mainGame->duel_param & DUEL_TRIGGER_WHEN_PRIVATE_KNOWLEDGE;
+						else if(i > 21)
+							set = mainGame->duel_param & 0x100ULL << (i - 3);
+						else
+							set = mainGame->duel_param & 0x100ULL << i;
+						mainGame->chkCustomRules[i]->setChecked(set);
+						if(i == 3)
+							mainGame->chkCustomRules[4]->setEnabled(set);
+					}
+					static constexpr uint32_t limits[]{ TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
+					for (int i = 0; i < sizeofarr(mainGame->chkTypeLimit); ++i)
+							mainGame->chkTypeLimit[i]->setChecked(mainGame->forbiddentypes & limits[i]);
+				}
 				break;
 			}
+			}
+			break;
+		}
+		case irr::gui::EGET_COMBO_BOX_CHANGED: {
+			switch (id) {
 			case COMBOBOX_DUEL_RULE: {
 				mainGame->chkTcgRulings->setChecked(false);
 				auto combobox = static_cast<irr::gui::IGUIComboBox*>(event.GUIEvent.Caller);
@@ -1012,7 +1003,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					if(i == 3)
 						mainGame->chkCustomRules[4]->setEnabled(set);
 				}
-				constexpr uint32_t limits[] = { TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
+				static constexpr uint32_t limits[]{ TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
 				for(int i = 0; i < sizeofarr(mainGame->chkTypeLimit); ++i)
 					mainGame->chkTypeLimit[i]->setChecked(mainGame->forbiddentypes & limits[i]);
 				break;
@@ -1116,7 +1107,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 						ClickButton(mainGame->btnLoadReplay);
 						return true;
 					} else if(extension == L"pem" || extension == L"cer" || extension == L"crt") {
-						gGameConfig->ssl_certificate_path = BufferIO::EncodeUTF8(to_open_file);
+						gGameConfig->override_ssl_certificate_path = BufferIO::EncodeUTF8(to_open_file);
 					}
 					to_open_file.clear();
 				}
@@ -1130,6 +1121,33 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 	default: break;
 	}
 	return false;
+}
+
+template<typename T>
+static void Synchronize(const T& range, irr::gui::IGUICheckBox* elem) {
+	auto checked = elem->isChecked();
+	for(auto i = range.first; i != range.second; ++i)
+		static_cast<irr::gui::IGUICheckBox*>(i->second)->setChecked(checked);
+}
+template<typename T>
+static void Synchronize(const T& range, irr::gui::IGUIScrollBar* elem) {
+	auto position = elem->getPos();
+	for(auto i = range.first; i != range.second; ++i)
+		static_cast<irr::gui::IGUIScrollBar*>(i->second)->setPos(position);
+}
+
+void MenuHandler::SynchronizeElement(irr::gui::IGUIElement* elem) const {
+	const auto range = synchronized_elements.equal_range(elem->getID());
+	if(range.first == range.second)
+		return;
+	switch(elem->getType()) {
+	case irr::gui::EGUIET_CHECK_BOX:
+		return Synchronize(range, static_cast<irr::gui::IGUICheckBox*>(elem));
+	case irr::gui::EGUIET_SCROLL_BAR:
+		return Synchronize(range, static_cast<irr::gui::IGUIScrollBar*>(elem));
+	default:
+		return;
+	}
 }
 
 }
