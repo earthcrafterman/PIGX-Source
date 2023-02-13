@@ -2,9 +2,9 @@
 
 set -euxo pipefail
 
-mkdir -p C:\vcpkg2
-cd C:\vcpkg2
-curl --retry 5 --connect-timeout 30 --location --remote-header-name --output installed.zip $VCPKG_CACHE_ZIP_URL
+mkdir -p /mnt/c/vcpkg2
+cd /mnt/c/vcpkg2
+curl --retry 5 --connect-timeout 30 --location --remote-header-name --output installed.zip https://github.com/edo9300/edopro-vcpkg-cache/releases/download/20221218/installed_x86-windows-static.zip
 unzip -uo installed.zip > /dev/null
 mkdir ports
 mkdir triplets
