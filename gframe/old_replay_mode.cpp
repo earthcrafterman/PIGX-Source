@@ -7,10 +7,10 @@
 
 namespace ygo {
 	bool ReplayMode::ReadReplayResponse() {
-		ReplayResponse res;
-		bool result = cur_yrp->GetNextResponse(&res);
+		ReplayResponse* res;
+		bool result = cur_yrp->GetNextResponse(res);
 		if (result)
-			OCG_DuelSetResponse(pduel, res.response.data(), res.length);
+			OCG_DuelSetResponse(pduel, res->response.data(), res->length);
 		return result;
 	}
 	int ReplayMode::OldReplayThread() {
@@ -21,13 +21,14 @@ namespace ygo {
 			EndDuel();
 			return 0;
 		}
-		const ReplayHeader& rh = cur_yrp->pheader;
+		const auto& replay_header = cur_yrp->pheader;
 		mainGame->dInfo.isFirst = true;
 		mainGame->dInfo.isTeam1 = true;
 		mainGame->dInfo.isRelay = !!(cur_yrp->params.duel_flags & DUEL_RELAY);
-		mainGame->dInfo.isSingleMode = !!(rh.flag & REPLAY_SINGLE_MODE);
-		mainGame->dInfo.isHandTest = !!(rh.flag & REPLAY_HAND_TEST);
+		mainGame->dInfo.isSingleMode = !!(replay_header.base.flag & REPLAY_SINGLE_MODE);
+		mainGame->dInfo.isHandTest = !!(replay_header.base.flag & REPLAY_HAND_TEST);
 		mainGame->dInfo.compat_mode = false;
+		mainGame->dInfo.legacy_race_size = false;
 		mainGame->dInfo.current_player[0] = 0;
 		mainGame->dInfo.current_player[1] = 0;
 		mainGame->dInfo.opponames.clear();
@@ -105,24 +106,21 @@ namespace ygo {
 		return 0;
 	}
 	bool ReplayMode::StartDuel() {
-		const ReplayHeader& rh = cur_yrp->pheader;
-		uint32_t seed = rh.seed;
-		if(!(rh.flag & REPLAY_DIRECT_SEED))
-			seed = RNG::mt19937(seed)();
-		const auto& names = ReplayMode::cur_yrp->GetPlayerNames();
-		mainGame->dInfo.selfnames.clear();
-		mainGame->dInfo.opponames.clear();
-		mainGame->dInfo.selfnames.insert(mainGame->dInfo.selfnames.end(), names.begin(), names.begin() + ReplayMode::cur_yrp->GetPlayersCount(0));
-		mainGame->dInfo.opponames.insert(mainGame->dInfo.opponames.end(), names.begin() + ReplayMode::cur_yrp->GetPlayersCount(0), names.end());
+		const auto& replay_header = cur_yrp->pheader;
+		const auto& seed = replay_header.seed;
+		const auto& names = cur_yrp->GetPlayerNames();
+		const auto first_oppo_player = names.begin() + cur_yrp->GetPlayersCount(0);
+		mainGame->dInfo.selfnames.assign(names.begin(), first_oppo_player);
+		mainGame->dInfo.opponames.assign(first_oppo_player, names.end());
 		uint32_t start_lp = cur_yrp->params.start_lp;
 		uint32_t start_hand = cur_yrp->params.start_hand;
 		uint32_t draw_count = cur_yrp->params.draw_count;
 		OCG_Player team = { start_lp, start_hand, draw_count };
-		pduel = mainGame->SetupDuel({ seed, cur_yrp->params.duel_flags, team, team });
+		pduel = mainGame->SetupDuel({ { seed[0], seed[1], seed[2], seed[3] }, cur_yrp->params.duel_flags, team, team });
 		mainGame->dInfo.duel_params = cur_yrp->params.duel_flags;
 		mainGame->dInfo.duel_field = mainGame->GetMasterRule(mainGame->dInfo.duel_params);
-		matManager.SetActiveVertices((mainGame->dInfo.duel_params & DUEL_3_COLUMNS_FIELD) ? 1 : 0,
-									 (mainGame->dInfo.duel_field == 3 || mainGame->dInfo.duel_field == 5) ? 0 : 1);
+		matManager.SetActiveVertices(mainGame->dInfo.HasFieldFlag(DUEL_3_COLUMNS_FIELD),
+									 !mainGame->dInfo.HasFieldFlag(DUEL_SEPARATE_PZONE));
 		mainGame->SetPhaseButtons();
 		mainGame->dInfo.lp[0] = start_lp;
 		mainGame->dInfo.lp[1] = start_lp;
@@ -130,7 +128,7 @@ namespace ygo {
 		mainGame->dInfo.strLP[0] = fmt::to_wstring(start_lp);
 		mainGame->dInfo.strLP[1] = mainGame->dInfo.strLP[0];
 		mainGame->dInfo.turn = 0;
-		if (!mainGame->dInfo.isSingleMode || (rh.flag & REPLAY_HAND_TEST)) {
+		if (!mainGame->dInfo.isSingleMode || (replay_header.base.flag & REPLAY_HAND_TEST)) {
 			auto rule_cards = cur_yrp->GetRuleCards();
 			OCG_NewCardInfo card_info = { 0, 0, 0, 0, 0, 0, POS_FACEDOWN_DEFENSE };
 			for(auto card : rule_cards) {
@@ -166,12 +164,12 @@ namespace ygo {
 					OCG_DuelNewCard(pduel, card_info);
 				}
 			}
-			if(rh.flag & REPLAY_HAND_TEST) {
+			if(replay_header.base.flag & REPLAY_HAND_TEST) {
 				const char cmd[] = "Debug.ReloadFieldEnd()";
 				OCG_LoadScript(pduel, cmd, sizeof(cmd) - 1, " ");
 			} else {
-				mainGame->dField.Initial(0, decks[0].main_deck.size(), decks[0].extra_deck.size());
-				mainGame->dField.Initial(1, decks[mainGame->dInfo.team1].main_deck.size(), decks[mainGame->dInfo.team1].extra_deck.size());
+				mainGame->dField.Initial(0, static_cast<uint32_t>(decks[0].main_deck.size()), static_cast<uint32_t>(decks[0].extra_deck.size()));
+				mainGame->dField.Initial(1, static_cast<uint32_t>(decks[mainGame->dInfo.team1].main_deck.size()), static_cast<uint32_t>(decks[mainGame->dInfo.team1].extra_deck.size()));
 			}
 		} else {
 			if(!mainGame->LoadScript(pduel, cur_yrp->scriptname))

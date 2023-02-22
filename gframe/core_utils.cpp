@@ -5,9 +5,10 @@
 
 namespace CoreUtils {
 
-#define PARSE(value) do {value = BufferIO::Read<decltype(value)>(current);} while(0); break
+#define PARSE_EXPLICIT(value, type) do {value = BufferIO::Read<type>(current);} while(0); break
+#define PARSE(value) PARSE_EXPLICIT(value, decltype(value))
 
-void Query::Parse(const uint8_t*& current) {
+void Query::Parse(const uint8_t*& current, bool legacy_race_size) {
 	flag = 0;
 	for(;;) {
 		auto size = BufferIO::Read<uint16_t>(current);
@@ -25,7 +26,12 @@ void Query::Parse(const uint8_t*& current) {
 			case QUERY_LEVEL: PARSE(level);
 			case QUERY_RANK: PARSE(rank);
 			case QUERY_ATTRIBUTE: PARSE(attribute);
-			case QUERY_RACE: PARSE(race);
+			case QUERY_RACE: {
+				if(legacy_race_size) {
+					PARSE_EXPLICIT(race, uint32_t);
+				}
+				PARSE(race);
+			}
 			case QUERY_ATTACK: PARSE(attack);
 			case QUERY_DEFENSE: PARSE(defense);
 			case QUERY_BASE_ATTACK: PARSE(base_attack);
@@ -79,6 +85,7 @@ void Query::Parse(const uint8_t*& current) {
 	}
 }
 #undef PARSE
+#undef PARSE_SPECIFIC
 #define PARSE_SINGLE(query,value) do{if(flag & query) {\
 value = BufferIO::Read<uint32_t>(current);\
 }} while(0)
@@ -154,7 +161,7 @@ void Query::GenerateBuffer(std::vector<uint8_t>& buffer, bool is_for_public_buff
 		if((cur_flag == QUERY_REASON_CARD && reason_card.location == 0) ||
 			(cur_flag == QUERY_EQUIP_CARD && equip_card.location == 0))
 			continue;
-		BufferIO::insert_value<uint16_t>(buffer, GetFlagSize(cur_flag) + sizeof(uint32_t));
+		BufferIO::insert_value<uint16_t>(buffer, static_cast<uint16_t>(GetFlagSize(cur_flag) + sizeof(uint32_t)));
 		BufferIO::insert_value<uint32_t>(buffer, cur_flag);
 		switch(cur_flag) {
 			case QUERY_CODE: SET(code);
@@ -187,7 +194,7 @@ void Query::GenerateBuffer(std::vector<uint8_t>& buffer, bool is_for_public_buff
 				break;
 			}
 			case QUERY_TARGET_CARD: {
-				BufferIO::insert_value<uint32_t>(buffer, target_cards.size());
+				BufferIO::insert_value<uint32_t>(buffer, static_cast<uint32_t>(target_cards.size()));
 				for(auto& info : target_cards) {
 					BufferIO::insert_value<uint8_t>(buffer, info.controler);
 					BufferIO::insert_value<uint8_t>(buffer, info.location);
@@ -199,7 +206,7 @@ void Query::GenerateBuffer(std::vector<uint8_t>& buffer, bool is_for_public_buff
 			case QUERY_OVERLAY_CARD:
 			case QUERY_COUNTERS: {
 				auto& vec = (cur_flag == QUERY_OVERLAY_CARD) ? overlay_cards : counters;
-				BufferIO::insert_value<uint32_t>(buffer, vec.size());
+				BufferIO::insert_value<uint32_t>(buffer, static_cast<uint32_t>(vec.size()));
 				for(auto& val : vec)
 					BufferIO::insert_value<uint32_t>(buffer, val);
 				break;
@@ -224,18 +231,22 @@ bool Query::IsPublicQuery(uint32_t to_check_flag) const {
 	return (to_check_flag & private_queries) == 0;
 }
 
-uint32_t Query::GetFlagSize(uint32_t to_check_flag) const {
+size_t Query::GetFlagSize(uint32_t to_check_flag) const {
 	static constexpr auto uint8_queries = QUERY_OWNER | QUERY_IS_PUBLIC | QUERY_IS_HIDDEN;
 	static constexpr auto uint32_queries = QUERY_CODE | QUERY_POSITION | QUERY_ALIAS | QUERY_TYPE
-		| QUERY_LEVEL | QUERY_RANK | QUERY_ATTRIBUTE | QUERY_RACE | QUERY_ATTACK
+		| QUERY_LEVEL | QUERY_RANK | QUERY_ATTRIBUTE | QUERY_ATTACK
 		| QUERY_DEFENSE | QUERY_BASE_ATTACK | QUERY_BASE_DEFENSE | QUERY_REASON
 		| QUERY_STATUS | QUERY_LSCALE | QUERY_RSCALE | QUERY_COVER;
+	static constexpr auto uint64_queries = QUERY_RACE;
 
 	if((to_check_flag & uint8_queries) != 0)
 		return sizeof(uint8_t);
 
 	if((to_check_flag & uint32_queries) != 0)
 		return sizeof(uint32_t);
+
+	if((to_check_flag & uint64_queries) != 0)
+		return sizeof(uint64_t);
 
 	if((to_check_flag & (QUERY_REASON_CARD | QUERY_EQUIP_CARD)) != 0)
 		return sizeof(uint16_t) + sizeof(uint64_t);
@@ -255,8 +266,8 @@ uint32_t Query::GetFlagSize(uint32_t to_check_flag) const {
 	}
 }
 
-uint32_t Query::GetSize() const {
-	uint32_t size = 0;
+size_t Query::GetSize() const {
+	size_t size = 0;
 	if(onfield_skipped)
 		return 0;
 	for(uint64_t cur_flag = 1; cur_flag <= QUERY_END; cur_flag <<= 1) {
@@ -303,11 +314,11 @@ PacketStream ParseMessages(OCG_Duel duel) {
 	return PacketStream{};
 }
 
-void QueryStream::Parse(const uint8_t* buff) {
+void QueryStream::Parse(const uint8_t* buff, bool legacy_race_size) {
 	auto size = BufferIO::Read<uint32_t>(buff);
 	const auto* current = buff;
 	while(static_cast<uint32_t>(current - buff) < size)
-		queries.emplace_back(Query::Token{}, current);
+		queries.emplace_back(Query::Token{}, current, legacy_race_size);
 }
 
 void QueryStream::ParseCompat(const uint8_t* buff, uint32_t len) {
@@ -319,8 +330,8 @@ void QueryStream::ParseCompat(const uint8_t* buff, uint32_t len) {
 	}
 }
 
-uint32_t QueryStream::GetSize() const {
-	uint32_t size = 0;
+size_t QueryStream::GetSize() const {
+	size_t size = 0;
 	for(const auto& query : queries)
 		size += query.GetSize();
 	return size;
@@ -332,7 +343,7 @@ void QueryStream::GenerateBuffer(std::vector<uint8_t>& buffer, bool check_hidden
 	buffer.resize(prev_size + sizeof(uint32_t));
 	for(const auto& query : queries)
 		query.GenerateBuffer(buffer, false, check_hidden);
-	uint32_t written_size = (buffer.size() - prev_size) - sizeof(uint32_t);
+	uint32_t written_size = static_cast<uint32_t>((buffer.size() - prev_size) - sizeof(uint32_t));
 	memcpy(&buffer[prev_size], &written_size, sizeof(uint32_t));
 }
 
@@ -342,7 +353,7 @@ void QueryStream::GeneratePublicBuffer(std::vector<uint8_t>& buffer) const {
 	buffer.resize(prev_size + sizeof(uint32_t));
 	for(const auto& query : queries)
 		query.GenerateBuffer(buffer, true, true);
-	uint32_t written_size = (buffer.size() - prev_size) - sizeof(uint32_t);
+	uint32_t written_size = static_cast<uint32_t>((buffer.size() - prev_size) - sizeof(uint32_t));
 	memcpy(&buffer[prev_size], &written_size, sizeof(uint32_t));
 }
 
@@ -350,7 +361,7 @@ PacketStream::PacketStream(uint8_t* buff, uint32_t len) {
 	auto* current = buff;
 	while(static_cast<uint32_t>(current - buff) < len) {
 		uint32_t size = BufferIO::Read<uint32_t>(current);
-		packets.emplace_back(current, size - sizeof(uint8_t));
+		packets.emplace_back(current, static_cast<int>(size - sizeof(uint8_t)));
 		current += size;
 	}
 }

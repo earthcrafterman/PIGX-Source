@@ -4,7 +4,7 @@
 #include <Windows.h>
 
 #define KERNELEX 0
-#define LIBGIT2_1_4 0
+#define LIBGIT2_1_4 1
 
 /*
 creates 2 functions, the stub function prefixed by handledxxx that is then exported via asm,
@@ -283,6 +283,14 @@ void SListUnlock(PSLIST_HEADER ListHead) {
 	DWORD index = (((DWORD)ListHead) >> MEMORY_ALLOCATION_ALIGNMENT) & 0xFF;
 	slist_lock[index] = 0;
 }
+template<typename T>
+auto GetListSequence(const T& list)->decltype(list->Sequence)& {
+	return list->Sequence;
+}
+template<typename T>
+auto GetListSequence(const T& list)->decltype(list->CpuId)& {
+	return list->CpuId;
+}
 
 //Note: ListHead->Next.N== first node
 MAKELOADER(InterlockedPopEntrySList, PSLIST_ENTRY, (PSLIST_HEADER ListHead), (ListHead)) {
@@ -293,7 +301,7 @@ MAKELOADER(InterlockedPopEntrySList, PSLIST_ENTRY, (PSLIST_HEADER ListHead), (Li
 		ret = ListHead->Next.Next;
 		ListHead->Next.Next = ret->Next;
 		ListHead->Depth--;
-		ListHead->Sequence++;
+		GetListSequence(ListHead)++;
 	}
 	SListUnlock(ListHead);
 	return ret;
@@ -306,7 +314,7 @@ MAKELOADER(InterlockedPushEntrySList, PSLIST_ENTRY, (PSLIST_HEADER ListHead, PSL
 	ListEntry->Next = ret;
 	ListHead->Next.Next = ListEntry;
 	ListHead->Depth++;
-	ListHead->Sequence++;
+	GetListSequence(ListHead)++;
 	SListUnlock(ListHead);
 	return ret;
 }
@@ -317,7 +325,7 @@ MAKELOADER(InterlockedFlushSList, PSLIST_ENTRY, (PSLIST_HEADER ListHead), (ListH
 	ret = ListHead->Next.Next;
 	ListHead->Next.Next = nullptr;
 	ListHead->Depth = 0;
-	ListHead->Sequence++;
+	GetListSequence(ListHead)++;
 	SListUnlock(ListHead);
 	return ret;
 }
@@ -327,7 +335,7 @@ MAKELOADER_WITH_CHECK(InitializeSListHead, void, (PSLIST_HEADER ListHead), (List
 	SListLock(ListHead);
 	ListHead->Next.Next = nullptr;
 	ListHead->Depth = 0;
-	ListHead->Sequence = 0;
+	GetListSequence(ListHead) = 0;
 	SListUnlock(ListHead);
 }
 
@@ -361,30 +369,11 @@ MAKELOADER(ConvertFiberToThread, BOOL, (), ()) {
 }
 
 #if LIBGIT2_1_4
-// Fiber local storage callback function workaround
-// When fiber local storage is used, it's possible to provide
-// a callback function that would be called on thread termination
-// emulate the behaviour by using a thread_local storage that will
-// instead be handled by the c runtime rather than by the kernel
-struct Callbacker {
-	PFLS_CALLBACK_FUNCTION callback{};
-	DWORD m_index;
-	void CallCallback() {
-		if(callback)
-			callback(TlsGetValue(m_index));
-		callback = nullptr;
-	}
-	~Callbacker() {
-		CallCallback();
-	}
-};
-thread_local Callbacker tl;
+// We take the small memory leak and we map Fls functions to Tls
+// that don't support the callback function
 
 MAKELOADER(FlsAlloc, DWORD, (PFLS_CALLBACK_FUNCTION lpCallback), (lpCallback)) {
-	auto index = TlsAlloc();
-	tl.callback = lpCallback;
-	tl.m_index = index;
-	return index;
+	return TlsAlloc();
 }
 
 MAKELOADER(FlsSetValue, BOOL, (DWORD dwFlsIndex, PVOID lpFlsData), (dwFlsIndex, lpFlsData)) {
@@ -396,7 +385,6 @@ MAKELOADER(FlsGetValue, PVOID, (DWORD dwFlsIndex), (dwFlsIndex)) {
 }
 
 MAKELOADER(FlsFree, BOOL, (DWORD dwFlsIndex), (dwFlsIndex)) {
-	tl.CallCallback();
 	return TlsFree(dwFlsIndex);
 }
 using fpRtlNtStatusToDosError = ULONG(WINAPI*)(DWORD Status);

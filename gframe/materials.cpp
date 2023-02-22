@@ -241,8 +241,8 @@ Materials::Materials() {
 	SetS3DVertex(vFieldSzone[0][0][0][7], 6.9f, 1.4f, 7.7f, 2.6f, 0, 1, 0, 0, 0, 0);
 	SetS3DVertex(vFieldSzone[1][0][0][7], 7.9f, 0.1f, 8.7f, 1.3f, 0, 1, 0, 0, 0, 0);
 	//RScale speed duel
-	SetS3DVertex(vFieldSzone[0][7][0][1], 5.8f, 1.4f, 6.6f, 2.6f, 0, 1, 0, 0, 0, 0);
-	SetS3DVertex(vFieldSzone[0][7][1][1], 6.8f, 0.1f, 7.6f, 1.3f, 0, 1, 0, 0, 0, 0);
+	SetS3DVertex(vFieldSzone[0][1][0][7], 5.8f, 1.4f, 6.6f, 2.6f, 0, 1, 0, 0, 0, 0);
+	SetS3DVertex(vFieldSzone[1][1][0][7], 6.8f, 0.1f, 7.6f, 1.3f, 0, 1, 0, 0, 0, 0);
 
 	SetS3DVertex(vFieldDeck[0][1], 1.0f, -2.7f, 0.2f, -3.9f, 0, 1, 0, 0, 0, 0);
 	SetS3DVertex(vFieldDeck[1][1], 2.1f, -2.7f, 1.3f, -3.9f, 0, 1, 0, 0, 0, 0);
@@ -313,7 +313,7 @@ Materials::Materials() {
 	SetS3DVertex(vSkillZone[1][1][1], 7.7f, -0.1f, 6.9f, -1.3f, 0, 1, 0, 0, 0, 0);
 
 
-	for(int i = 0; i < 40; ++i)
+	for(irr::u16 i = 0; i < 40; ++i)
 		iArrow[i] = i;
 
 	mCard.AmbientColor = 0xffffffff;
@@ -380,13 +380,13 @@ void Materials::GenArrow(float y) {
 	vArrow[39] = vArrow[38];
 }
 
-void Materials::SetActiveVertices(int speed, int field) {
-	vActiveSzone = &vFieldSzone[field][speed];
-	vActiveDeck = &vFieldDeck[speed];
-	vActiveExtra = &vFieldExtra[speed];
-	vActiveGrave = &vFieldGrave[field][speed];
-	vActiveRemove = &vFieldRemove[field][speed];
-	vActiveSkill = &vSkillZone[field][speed];
+void Materials::SetActiveVertices(int three_columns, int not_separate_pzones) {
+	vActiveSzone = &vFieldSzone[not_separate_pzones][three_columns];
+	vActiveDeck = &vFieldDeck[three_columns];
+	vActiveExtra = &vFieldExtra[three_columns];
+	vActiveGrave = &vFieldGrave[not_separate_pzones][three_columns];
+	vActiveRemove = &vFieldRemove[not_separate_pzones][three_columns];
+	vActiveSkill = &vSkillZone[not_separate_pzones][three_columns];
 }
 
 }

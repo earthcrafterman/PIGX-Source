@@ -21,12 +21,28 @@ struct ClientVersion {
 bool operator==(const ClientVersion& ver1, const ClientVersion& ver2);
 bool operator!=(const ClientVersion& ver1, const ClientVersion& ver2);
 
+struct DeckSizes {
+	struct Sizes {
+		uint16_t min;
+		uint16_t max;
+	} main, extra, side;
+};
+
+bool operator!=(const DeckSizes::Sizes& limits, const size_t count);
+bool operator==(const DeckSizes::Sizes& limits, const size_t count);
+static inline bool operator==(const DeckSizes& one, const DeckSizes& other) {
+	return memcmp(&one, &other, sizeof(DeckSizes)) == 0;
+}
+static inline bool operator!=(const DeckSizes& one, const DeckSizes& other) {
+	return !(one == other);
+}
+
 struct HostInfo {
 	uint32_t lflist;
 	uint8_t rule;
 	uint8_t mode;
 	uint8_t duel_rule;
-	uint8_t no_check_deck;
+	uint8_t no_check_deck_content;
 	uint8_t no_shuffle_deck;
 	uint32_t start_lp;
 	uint8_t start_hand;
@@ -41,6 +57,7 @@ struct HostInfo {
 	uint32_t duel_flag_low;
 	uint32_t forbiddentypes;
 	uint16_t extra_rules;
+	DeckSizes sizes;
 };
 struct HostPacket {
 	uint16_t identifier;
@@ -207,28 +224,26 @@ struct DuelPlayer {
 
 class DuelMode {
 public:
-	DuelMode(): host_player(0), pduel(0), duel_stage(0) {}
+	DuelMode() : etimer{ nullptr }, host_player{ nullptr }, duel_stage{ 0 }, pduel{ nullptr }, seeking_rematch{ false } {}
 	virtual ~DuelMode() {}
-	virtual void Chat(DuelPlayer* dp, void* pdata, int32_t len) {}
-	virtual void JoinGame(DuelPlayer* dp, CTOS_JoinGame* pkt, bool is_creater) {}
-	virtual void LeaveGame(DuelPlayer* dp) {}
-	virtual void ToDuelist(DuelPlayer* dp) {}
-	virtual void ToObserver(DuelPlayer* dp) {}
-	virtual void PlayerReady(DuelPlayer* dp, bool is_ready) {}
-	virtual void PlayerKick(DuelPlayer* dp, uint8_t pos) {}
-	virtual void UpdateDeck(DuelPlayer* dp, void* pdata, uint32_t len) {}
-	virtual void StartDuel(DuelPlayer* dp) {}
-	virtual void HandResult(DuelPlayer* dp, uint8_t res) {}
-	virtual void RematchResult(DuelPlayer* dp, uint8_t rematch) {}
-	virtual void TPResult(DuelPlayer* dp, uint8_t tp) {}
-	virtual void Process() {}
-	virtual int32_t Analyze(CoreUtils::Packet packet) {
-		return 0;
-	}
-	virtual void Surrender(DuelPlayer* dp) {}
-	virtual void GetResponse(DuelPlayer* dp, void* pdata, uint32_t len) {}
-	virtual void TimeConfirm(DuelPlayer* dp) {}
-	virtual void EndDuel() {};
+	virtual void Chat(DuelPlayer* dp, void* pdata, int32_t len) = 0;
+	virtual void JoinGame(DuelPlayer* dp, CTOS_JoinGame* pkt, bool is_creater) = 0;
+	virtual void LeaveGame(DuelPlayer* dp) = 0;
+	virtual void ToDuelist(DuelPlayer* dp) = 0;
+	virtual void ToObserver(DuelPlayer* dp) = 0;
+	virtual void PlayerReady(DuelPlayer* dp, bool is_ready) = 0;
+	virtual void PlayerKick(DuelPlayer* dp, uint8_t pos) = 0;
+	virtual void UpdateDeck(DuelPlayer* dp, void* pdata, uint32_t len) = 0;
+	virtual void StartDuel(DuelPlayer* dp) = 0;
+	virtual void HandResult(DuelPlayer* dp, uint8_t res) = 0;
+	virtual void RematchResult(DuelPlayer* dp, uint8_t rematch) = 0;
+	virtual void TPResult(DuelPlayer* dp, uint8_t tp) = 0;
+	virtual void Process() = 0;
+	virtual int32_t Analyze(CoreUtils::Packet packet) = 0;
+	virtual void Surrender(DuelPlayer* dp) = 0;
+	virtual void GetResponse(DuelPlayer* dp, void* pdata, uint32_t len) = 0;
+	virtual void TimeConfirm(DuelPlayer* dp) = 0;
+	virtual void EndDuel() = 0;
 
 public:
 	event* etimer;
@@ -330,11 +345,11 @@ public:
 #define DUELIST_KINGDOM     0x40
 #define DIMENSION_DUEL      0x80
 #define TURBO_DUEL          0x100
-#define DOUBLE_DECK         0x200
+#define RULE_OF_THE_DAY     0x200
 #define COMMAND_DUEL        0x400
 #define DECK_MASTER         0x800
 #define ACTION_DUEL         0x1000
-#define DECK_LIMIT_20       0x2000
+// #define DECK_LIMIT_20       0x2000
 
 #define DUEL_STAGE_BEGIN		0
 #define DUEL_STAGE_FINGER		1

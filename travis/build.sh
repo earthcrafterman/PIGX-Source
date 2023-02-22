@@ -15,12 +15,13 @@ if [[ -f "NotoSansJP-Regular.otf" ]]; then
 fi
 
 if [[ -z "${VS_GEN:-""}" ]]; then
-	./premake5.exe vs2017 --no-core=true --oldwindows=true --sound=sfml --no-joystick=true --pics=\"$PICS_URL\" --fields=\"$FIELDS_URL\" --covers=\"$COVERS_URL\" --discord=\"$DISCORD_APP_ID\" --update-url=\"$UPDATE_URL\"
-	dotnet msbuild -m -p:Configuration=release -p:Platform=Win32 ./build/ygo.sln -t:ygoprodll -verbosity:minimal -p:EchoOff=true
-	python.exe ./travis/patcher.py bin/release/ygoprodll.exe
+	./premake5 vs2017 $BUNDLED_FONT --no-core=true --oldwindows=true --sound=sfml --no-joystick=true --pics=\"$PICS_URL\" --fields=\"$FIELDS_URL\" --covers=\"$COVERS_URL\" --discord=\"$DISCORD_APP_ID\" --update-url=\"$UPDATE_URL\"
+	dotnet msbuild -m -p:Configuration=$BUILD_CONFIG -p:Platform=Win32 ./build/ygo.sln -t:ygoprodll -verbosity:minimal -p:EchoOff=true
+	python.exe ./travis/patcher.py bin/$BUILD_CONFIG/ygoprodll.exe
 else
-	./premake5.exe $VS_GEN --no-core=true --sound=sfml --no-joystick=true --pics=\"$PICS_URL\" --fields=\"$FIELDS_URL\" --covers=\"$COVERS_URL\" --discord=\"$DISCORD_APP_ID\" --update-url=\"$UPDATE_URL\"
-	dotnet msbuild -m -p:Configuration=release -p:Platform=Win32 ./build/ygo.sln -t:ygoprodll -verbosity:minimal -p:EchoOff=true
+	./premake5 $VS_GEN $BUNDLED_FONT --no-core=true --sound=sfml --no-joystick=true --pics=\"$PICS_URL\" --fields=\"$FIELDS_URL\" --covers=\"$COVERS_URL\" --discord=\"$DISCORD_APP_ID\" --update-url=\"$UPDATE_URL\"
+	dotnet msbuild -m -p:Configuration=$BUILD_CONFIG -p:Platform=Win32 ./build/ygo.sln -t:ygoprodll -verbosity:minimal -p:EchoOff=true
+fi
 fi
 exit 0
 PREMAKE_FLAGS=""
@@ -29,5 +30,3 @@ if [[ -n "${ARCH:-""}" ]]; then
 fi
 if [[ -n "${TARGET_OS:-""}" ]]; then
 	PREMAKE_FLAGS="$PREMAKE_FLAGS --os=macosx"
-fi
-./premake5.exe gmake2 $PREMAKE_FLAGS --no-core=true --vcpkg-root=$VCPKG_ROOT --sound=sfml --no-joystick=true --pics=\"$PICS_URL\" --fields=\"$FIELDS_URL\" --covers=\"$COVERS_URL\" --discord=\"$DISCORD_APP_ID\" --update-url=\"$UPDATE_URL\"

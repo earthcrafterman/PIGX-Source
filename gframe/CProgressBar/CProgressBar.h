@@ -8,7 +8,7 @@ class IGUIStaticText;
 }
 }
 
-class IProgressBar : public irr::gui::IGUIElement {
+class IProgressBar final : public irr::gui::IGUIElement {
 public:
 
 	IProgressBar(irr::gui::IGUIEnvironment* guienv, const irr::core::recti& rectangle, irr::s32 id = -1, irr::gui::IGUIElement* parent = 0);
@@ -18,7 +18,7 @@ public:
 	void setProgress(irr::s32 progress);
 
 	/*Set bar Colors*/
-	void setColors(irr::video::SColor progress = irr::video::SColor(255, 255, 255, 255), irr::video::SColor filling = irr::video::SColor(255, 0, 0, 0));
+	void setColors(irr::video::SColor fillcolor = irr::video::SColor(255, 255, 255, 255), irr::video::SColor emptycolor = irr::video::SColor(255, 0, 0, 0));
 
 	/*Allow you to add a "border" into your bar. You MUST specify the size (of course in pixel) of the border. You can also pass a color parameter (Black by default)*/
 	void addBorder(irr::s32 size, irr::video::SColor color = irr::video::SColor(255, 0, 0, 0));

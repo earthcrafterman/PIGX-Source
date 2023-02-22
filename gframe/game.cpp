@@ -1,5 +1,4 @@
 #include <sstream>
-#include <fstream>
 #include <nlohmann/json.hpp>
 #include <fmt/format.h>
 #include <fmt/printf.h>
@@ -66,7 +65,7 @@ constexpr int CARD_IMG_WRAPPER_WIDTH = CARD_IMG_WIDTH + CARD_IMG_WRAPPER_H_PADDI
 constexpr int CARD_IMG_WRAPPER_HEIGHT = CARD_IMG_HEIGHT + CARD_IMG_WRAPPER_V_PADDING * 2;
 constexpr float CARD_IMG_WRAPPER_ASPECT_RATIO = ((float)CARD_IMG_WRAPPER_WIDTH) / ((float)CARD_IMG_WRAPPER_HEIGHT);
 
-uint16_t PRO_VERSION = 0x1353;
+uint16_t PRO_VERSION = 0x1354;
 
 namespace {
 template<typename T>
@@ -107,6 +106,7 @@ Game::~Game() {
 
 void Game::Initialize() {
 	dpi_scale = gGameConfig->dpi_scale;
+	duel_param = gGameConfig->lastDuelParam;
 	if(!device)
 		device = GUIUtils::CreateDevice(gGameConfig);
 #if !defined(__ANDROID__) && !defined(EDOPRO_IOS)
@@ -145,10 +145,10 @@ void Game::Initialize() {
 	filesystem->grab();
 	coreloaded = true;
 #ifdef YGOPRO_BUILD_DLL
-	if(!(ocgcore = LoadOCGcore(Utils::GetWorkingDirectory())) && !(ocgcore = LoadOCGcore(fmt::format(EPRO_TEXT("{}/expansions/"), Utils::GetWorkingDirectory()))))
+	if(!(ocgcore = LoadOCGcore(Utils::GetWorkingDirectory())) && !(ocgcore = LoadOCGcore(epro::format(EPRO_TEXT("{}/expansions/"), Utils::GetWorkingDirectory()))))
 		coreloaded = false;
 #endif
-	skinSystem = new CGUISkinSystem(fmt::format(EPRO_TEXT("{}/skin"), Utils::GetWorkingDirectory()).data(), device);
+	skinSystem = new CGUISkinSystem(epro::format(EPRO_TEXT("{}/skin"), Utils::GetWorkingDirectory()).data(), device);
 	if(!skinSystem)
 		throw std::runtime_error("Couldn't create skin system");
 	linePatternGL = 0x0f0f;
@@ -164,14 +164,22 @@ void Game::Initialize() {
 	PopulateResourcesDirectories();
 	env = device->getGUIEnvironment();
 	env->getRootGUIElement()->setRelativePosition({ {}, {(irr::s32)(1024 * dpi_scale), (irr::s32)(640 * dpi_scale) } });
-	guiFont = irr::gui::CGUITTFont::createTTFont(env, gGameConfig->textfont.font.data(), Scale(gGameConfig->textfont.size), {});
+	auto textfont = gGameConfig->textfont;
+	textfont.size = Scale(textfont.size);
+	auto fallbackFonts = gGameConfig->fallbackFonts;
+	for(auto& font : fallbackFonts)
+		font.size = Scale(font.size);
+	guiFont = irr::gui::CGUITTFont::createTTFont(env, textfont, fallbackFonts);
 	if(!guiFont)
 		throw std::runtime_error("Failed to load text font");
 	textFont = guiFont;
 	textFont->grab();
-	numFont = irr::gui::CGUITTFont::createTTFont(env, gGameConfig->numfont.data(), Scale(16), {});
-	adFont = irr::gui::CGUITTFont::createTTFont(env, gGameConfig->numfont.data(), Scale(12), {});
-	lpcFont = irr::gui::CGUITTFont::createTTFont(env, gGameConfig->numfont.data(), Scale(48), {});
+	GameConfig::TextFont numfont{ gGameConfig->numfont, (uint8_t)Scale(16) };
+	numFont = irr::gui::CGUITTFont::createTTFont(env, numfont, fallbackFonts);
+	numfont.size = Scale(12);
+	adFont = irr::gui::CGUITTFont::createTTFont(env, numfont, fallbackFonts);
+	numfont.size = Scale(48);
+	lpcFont = irr::gui::CGUITTFont::createTTFont(env, numfont, fallbackFonts);
 	if(!numFont || !adFont || !lpcFont)
 		throw std::runtime_error("Failed to load numbers font");
 	if(!ApplySkin(gGameConfig->skin, false, true)) {
@@ -202,7 +210,7 @@ void Game::Initialize() {
 	stAbout = irr::gui::CGUICustomText::addCustomText(L"Project Ignis: EDOPro\n"
 											L"The bleeding-edge automatic duel simulator\n"
 											L"\n"
-											L"Copyright (C) 2020-2022  Edoardo Lolletti (edo9300) and others\n"
+											L"Copyright (C) 2020-2023  Edoardo Lolletti (edo9300) and others\n"
 											L"Card scripts and supporting resources by Project Ignis.\n"
 											L"https://github.com/edo9300/edopro\n"
 											L"https://github.com/edo9300/ygopro-core\n"
@@ -213,13 +221,13 @@ void Game::Initialize() {
 											L"Supporting resources and app icon are distributed under separate licenses in their subfolders.\n"
 											L"\n"
 											L"Project Ignis:\n"
-											L"ahtelel, Cybercatman, Dragon3989, DyXel, edo9300, EerieCode, "
-											L"Gideon, Hatter, Hel, Icematoro, Larry126, LogicalNonsense, pyrQ, "
-											L"Sanct, senpaizuri, Steeldarkeagel, TheRazgriz, WolfOfWolves, Yamato\n"
+											L"ahtelel, Cybercatman, Dragon3989, DyXel, edo9300, EerieCode,"
+											L"Gideon, Hatter, Icematoro, Larry126, LogicalNonsense, pyrQ, Sanct,"
+											L"senpaizuri, Steeldarkeagel, TheRazgriz, WolfOfWolves, Yamato, YoshiDuels\n"
 											L"Default background and icon: LogicalNonsense\n"
 											L"Default fields: Icematoro\n"
 											L"\n"
-											L"Forked from Fluorohydride's YGOPro, maintainers DailyShana, mercury233.\n"
+											L"Forked from Fluorohydride's YGOPro, maintainer mercury233.\n"
 											L"Yu-Gi-Oh! is a trademark of Shueisha and Konami.\n"
 											L"This project is not affiliated with or endorsed by Shueisha or Konami.", false, env, wAbout, -1, Scale(10, 10, 440, 690));
 	((irr::gui::CGUICustomText*)stAbout)->enableScrollBar();
@@ -570,19 +578,19 @@ void Game::Initialize() {
 	defaultStrings.emplace_back(btnClearDeck, 1304);
 	btnDeleteDeck = AlignElementWithParent(env->addButton(Scale(225, 95, 290, 120), wDeckEdit, BUTTON_DELETE_DECK, gDataManager->GetSysString(1308).data()));
 	defaultStrings.emplace_back(btnDeleteDeck, 1308);
-	btnSideOK = AlignElementWithParent(env->addButton(Scale(510, 40, 820, 80), 0, BUTTON_SIDE_OK, gDataManager->GetSysString(1334).data()));
+	btnSideOK = AlignElementWithParent(env->addButton(Scale(510, 40, 820, 80), nullptr, BUTTON_SIDE_OK, gDataManager->GetSysString(1334).data()));
 	defaultStrings.emplace_back(btnSideOK, 1334);
 	btnSideOK->setVisible(false);
-	btnSideShuffle = AlignElementWithParent(env->addButton(Scale(310, 100, 370, 130), 0, BUTTON_SHUFFLE_DECK, gDataManager->GetSysString(1307).data()));
+	btnSideShuffle = AlignElementWithParent(env->addButton(Scale(310, 100, 370, 130), nullptr, BUTTON_SHUFFLE_DECK, gDataManager->GetSysString(1307).data()));
 	defaultStrings.emplace_back(btnSideShuffle, 1307);
 	btnSideShuffle->setVisible(false);
-	btnSideSort = AlignElementWithParent(env->addButton(Scale(375, 100, 435, 130), 0, BUTTON_SORT_DECK, gDataManager->GetSysString(1305).data()));
+	btnSideSort = AlignElementWithParent(env->addButton(Scale(375, 100, 435, 130), nullptr, BUTTON_SORT_DECK, gDataManager->GetSysString(1305).data()));
 	defaultStrings.emplace_back(btnSideSort, 1305);
 	btnSideSort->setVisible(false);
-	btnSideReload = AlignElementWithParent(env->addButton(Scale(440, 100, 500, 130), 0, BUTTON_SIDE_RELOAD, gDataManager->GetSysString(1309).data()));
+	btnSideReload = AlignElementWithParent(env->addButton(Scale(440, 100, 500, 130), nullptr, BUTTON_SIDE_RELOAD, gDataManager->GetSysString(1309).data()));
 	defaultStrings.emplace_back(btnSideReload, 1309);
 	btnSideReload->setVisible(false);
-	btnHandTest = AlignElementWithParent(env->addButton(Scale(205, 90, 295, 130), 0, BUTTON_HAND_TEST, gDataManager->GetSysString(1297).data()));
+	btnHandTest = AlignElementWithParent(env->addButton(Scale(205, 90, 295, 130), nullptr, BUTTON_HAND_TEST, gDataManager->GetSysString(1297).data()));
 	defaultStrings.emplace_back(btnHandTest, 1297);
 	btnHandTest->setVisible(false);
 	btnHandTest->setEnabled(coreloaded);
@@ -606,7 +614,7 @@ void Game::Initialize() {
 		if(increment) offset += 35;
 		return Scale(leftRail, offset, rightRail, offset + 25);
 	};
-	chkHandTestNoOpponent = env->addCheckBox(true, nextHandTestRow(10, mainMenuWidth - 10), wHandTest, -1, gDataManager->GetSysString(2081).data());
+	chkHandTestNoOpponent = env->addCheckBox(false, nextHandTestRow(10, mainMenuWidth - 10), wHandTest, -1, gDataManager->GetSysString(2081).data());
 	defaultStrings.emplace_back(chkHandTestNoOpponent, 2081);
 	chkHandTestNoShuffle = env->addCheckBox(false, nextHandTestRow(10, mainMenuWidth - 10), wHandTest, -1, gDataManager->GetSysString(1230).data());
 	defaultStrings.emplace_back(chkHandTestNoShuffle, 1230);
@@ -746,7 +754,7 @@ void Game::Initialize() {
 	defaultStrings.emplace_back(wReplay, 1202);
 	wReplay->getCloseButton()->setVisible(false);
 	wReplay->setVisible(false);
-	lstReplayList = irr::gui::CGUIFileSelectListBox::addFileSelectListBox(env, wReplay, LISTBOX_REPLAY_LIST, Scale(10, 30, 350, 400), filesystem, true, true, false);
+	lstReplayList = irr::gui::CGUIFileSelectListBox::addFileSelectListBox(env, wReplay, LISTBOX_REPLAY_LIST, Scale(10, 30, 350, 400), true, true, false);
 	lstReplayList->setWorkingPath(L"./replay", true);
 	lstReplayList->addFilteredExtensions({L"yrp", L"yrpx"});
 	lstReplayList->setItemHeight(Scale(18));
@@ -785,7 +793,7 @@ void Game::Initialize() {
 	defaultStrings.emplace_back(wSinglePlay, 1201);
 	wSinglePlay->getCloseButton()->setVisible(false);
 	wSinglePlay->setVisible(false);
-	lstSinglePlayList = irr::gui::CGUIFileSelectListBox::addFileSelectListBox(env, wSinglePlay, LISTBOX_SINGLEPLAY_LIST, Scale(10, 30, 350, 400), filesystem, true, true, false);
+	lstSinglePlayList = irr::gui::CGUIFileSelectListBox::addFileSelectListBox(env, wSinglePlay, LISTBOX_SINGLEPLAY_LIST, Scale(10, 30, 350, 400), true, true, false);
 	lstSinglePlayList->setItemHeight(Scale(18));
 	lstSinglePlayList->setWorkingPath(L"./puzzles", true);
 	lstSinglePlayList->addFilteredExtensions({L"lua"});
@@ -937,7 +945,7 @@ void Game::Initialize() {
 	RefreshLFLists();
 	ReloadCBFilterRule();
 
-	/*cbFilterMatchMode->addItem(fmt::format(L"[{}]", gDataManager->GetSysString(1227)).data());
+	/*cbFilterMatchMode->addItem(epro::format(L"[{}]", gDataManager->GetSysString(1227)).data());
 	cbFilterMatchMode->addItem(gDataManager->GetSysString(1244).data());
 	cbFilterMatchMode->addItem(gDataManager->GetSysString(1245).data());
 	cbFilterMatchMode->addItem(gDataManager->GetSysString(1246).data());*/
@@ -1107,7 +1115,7 @@ static constexpr std::pair<epro::wstringview, irr::video::E_DRIVER_TYPE> support
 
 void Game::PopulateGameHostWindows() {
 	//create host
-	wtcCreateHost = irr::gui::CGUIWindowedTabControl::addCGUIWindowedTabControl(env, Scale(320, 100, 700, 500), gDataManager->GetSysString(1224).data(), TAB_CONTROL_CREATE_HOST);
+	wtcCreateHost = irr::gui::CGUIWindowedTabControl::addCGUIWindowedTabControl(env, Scale(320, 100, 700, 530), gDataManager->GetSysString(1224).data(), TAB_CONTROL_CREATE_HOST);
 
 	wCreateHost = wtcCreateHost->getWindow();
 	defaultStrings.emplace_back(wCreateHost, 1224);
@@ -1115,38 +1123,86 @@ void Game::PopulateGameHostWindows() {
 	wCreateHost->setVisible(false);
 
 	{
-		auto tCreateHost = wtcCreateHost->addTab(gDataManager->GetSysString(2089).data());
-		defaultStrings.emplace_back(tCreateHost, 2089);
+		auto tDuelSettings = wtcCreateHost->addTab(gDataManager->GetSysString(2089).data());
+		defaultStrings.emplace_back(tDuelSettings, 2089);
 
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1226).data(), Scale(20, 10, 220, 30), false, false, tCreateHost), 1226);
-		cbHostLFList = AddComboBox(env, Scale(140, 5, 300, 30), tCreateHost, COMBOBOX_HOST_LFLIST);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1225).data(), Scale(20, 40, 220, 60), false, false, tCreateHost), 1225);
-		cbRule = AddComboBox(env, Scale(140, 35, 300, 60), tCreateHost);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1226).data(), Scale(20, 10, 220, 30), false, false, tDuelSettings), 1226);
+		cbHostLFList = AddComboBox(env, Scale(140, 5, 300, 30), tDuelSettings, COMBOBOX_HOST_LFLIST);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1225).data(), Scale(20, 40, 220, 60), false, false, tDuelSettings), 1225);
+		cbRule = AddComboBox(env, Scale(140, 35, 300, 60), tDuelSettings);
 		ReloadCBRule();
 		cbRule->setSelected(gGameConfig->lastallowedcards);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1227).data(), Scale(20, 70, 220, 90), false, false, tCreateHost), 1227);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1227).data(), Scale(20, 70, 220, 90), false, false, tDuelSettings), 1227);
 #define WStr(i) fmt::to_wstring<int>(i).data()
-		ebTeam1 = env->addEditBox(WStr(gGameConfig->team1count), Scale(140, 65, 170, 90), true, tCreateHost, EDITBOX_TEAM_COUNT);
+		ebTeam1 = env->addEditBox(WStr(gGameConfig->team1count), Scale(140, 65, 170, 90), true, tDuelSettings, EDITBOX_TEAM_COUNT);
 		ebTeam1->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		auto vsstring = env->addStaticText(gDataManager->GetSysString(1380).data(), Scale(175, 65, 195, 90), false, false, tCreateHost);
+		auto vsstring = env->addStaticText(gDataManager->GetSysString(1380).data(), Scale(175, 65, 195, 90), false, false, tDuelSettings);
 		defaultStrings.emplace_back(vsstring, 1380);
 		vsstring->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		ebTeam2 = env->addEditBox(WStr(gGameConfig->team2count), Scale(200, 65, 230, 90), true, tCreateHost, EDITBOX_TEAM_COUNT);
+		ebTeam2 = env->addEditBox(WStr(gGameConfig->team2count), Scale(200, 65, 230, 90), true, tDuelSettings, EDITBOX_TEAM_COUNT);
 		ebTeam2->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		vsstring = env->addStaticText(gDataManager->GetSysString(1381).data(), Scale(235, 65, 280, 90), false, false, tCreateHost);
+		vsstring = env->addStaticText(gDataManager->GetSysString(1381).data(), Scale(235, 65, 280, 90), false, false, tDuelSettings);
 		defaultStrings.emplace_back(vsstring, 1381);
 		vsstring->setTextAlignment(irr::gui::EGUIA_UPPERLEFT, irr::gui::EGUIA_CENTER);
-		ebBestOf = env->addEditBox(WStr(gGameConfig->bestOf), Scale(285, 65, 315, 90), true, tCreateHost, EDITBOX_NUMERIC);
+		ebBestOf = env->addEditBox(WStr(gGameConfig->bestOf), Scale(285, 65, 315, 90), true, tDuelSettings, EDITBOX_NUMERIC);
 		ebBestOf->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		btnRelayMode = env->addButton(Scale(325, 65, 370, 90), tCreateHost, -1, gDataManager->GetSysString(1247).data());
+		btnRelayMode = env->addButton(Scale(325, 65, 370, 90), tDuelSettings, -1, gDataManager->GetSysString(1247).data());
 		defaultStrings.emplace_back(btnRelayMode, 1247);
 		btnRelayMode->setIsPushButton(true);
 		btnRelayMode->setPressed(gGameConfig->relayDuel);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1237).data(), Scale(20, 100, 320, 120), false, false, tCreateHost), 1237);
-		ebTimeLimit = env->addEditBox(WStr(gGameConfig->timeLimit), Scale(140, 95, 220, 120), true, tCreateHost, EDITBOX_NUMERIC);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1237).data(), Scale(20, 100, 320, 120), false, false, tDuelSettings), 1237);
+		ebTimeLimit = env->addEditBox(WStr(gGameConfig->timeLimit), Scale(140, 95, 220, 120), true, tDuelSettings, EDITBOX_NUMERIC);
 		ebTimeLimit->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		btnRuleCards = env->addButton(Scale(260, 305, 370, 330), tCreateHost, BUTTON_RULE_CARDS, gDataManager->GetSysString(1625).data());
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1236).data(), Scale(20, 130, 220, 150), false, false, tDuelSettings), 1236);
+		cbDuelRule = AddComboBox(env, Scale(140, 125, 300, 150), tDuelSettings, COMBOBOX_DUEL_RULE);
+
+		chkNoShuffleDeck = env->addCheckBox(gGameConfig->noShuffleDeck, Scale(20, 160, 170, 180), tDuelSettings, DONT_SHUFFLE_DECK, gDataManager->GetSysString(1230).data());
+		defaultStrings.emplace_back(chkNoShuffleDeck, 1230);
+		menuHandler.MakeElementSynchronized(chkNoShuffleDeck);
+
+		chkTcgRulings = env->addCheckBox(duel_param & DUEL_TCG_SEGOC_NONPUBLIC, Scale(180, 160, 360, 180), tDuelSettings, TCG_SEGOC_NONPUBLIC, gDataManager->GetSysString(1239).data());
+		defaultStrings.emplace_back(chkTcgRulings, 1239);
+
+		chkNoCheckDeckContent = env->addCheckBox(gGameConfig->noCheckDeckContent, Scale(20, 190, 360, 210), tDuelSettings, DONT_CHECK_DECK_CONTENT, gDataManager->GetSysString(1229).data());
+		defaultStrings.emplace_back(chkNoCheckDeckContent, 1229);
+		menuHandler.MakeElementSynchronized(chkNoCheckDeckContent);
+
+		chkNoCheckDeckSize = env->addCheckBox(gGameConfig->noCheckDeckSize, Scale(20, 220, 360, 240), tDuelSettings, DONT_CHECK_DECK_SIZE, gDataManager->GetSysString(12113).data());
+		defaultStrings.emplace_back(chkNoCheckDeckSize, 12113);
+		menuHandler.MakeElementSynchronized(chkNoCheckDeckSize);
+
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1231).data(), Scale(20, 250, 320, 270), false, false, tDuelSettings), 1231);
+		ebStartLP = env->addEditBox(WStr(gGameConfig->startLP), Scale(140, 245, 220, 270), true, tDuelSettings, EDITBOX_NUMERIC);
+		ebStartLP->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1232).data(), Scale(20, 280, 320, 300), false, false, tDuelSettings), 1232);
+		ebStartHand = env->addEditBox(WStr(gGameConfig->startHand), Scale(140, 275, 220, 300), true, tDuelSettings, EDITBOX_NUMERIC);
+		ebStartHand->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1233).data(), Scale(20, 310, 320, 330), false, false, tDuelSettings), 1233);
+		ebDrawCount = env->addEditBox(WStr(gGameConfig->drawCount), Scale(140, 305, 220, 330), true, tDuelSettings, EDITBOX_NUMERIC);
+		ebDrawCount->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1234).data(), Scale(10, 340, 220, 360), false, false, tDuelSettings), 1234);
+		ebServerName = env->addEditBox(gGameConfig->gamename.data(), Scale(110, 335, 250, 360), true, tDuelSettings);
+		ebServerName->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+		btnRuleCards = env->addButton(Scale(260, 335, 370, 360), tDuelSettings, BUTTON_RULE_CARDS, gDataManager->GetSysString(1625).data());
 		defaultStrings.emplace_back(btnRuleCards, 1625);
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1235).data(), Scale(10, 370, 220, 390), false, false, tDuelSettings), 1235);
+		ebServerPass = env->addEditBox(L"", Scale(110, 365, 250, 390), true, tDuelSettings);
+		ebServerPass->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+		btnHostConfirm = env->addButton(Scale(260, 365, 370, 390), tDuelSettings, BUTTON_HOST_CONFIRM, gDataManager->GetSysString(1211).data());
+		defaultStrings.emplace_back(btnHostConfirm, 1211);
+		btnHostCancel = env->addButton(Scale(260, 395, 370, 420), tDuelSettings, BUTTON_HOST_CANCEL, gDataManager->GetSysString(1212).data());
+		defaultStrings.emplace_back(btnHostCancel, 1212);
+		stHostPort = env->addStaticText(gDataManager->GetSysString(1238).data(), Scale(10, 400, 220, 420), false, false, tDuelSettings);
+		defaultStrings.emplace_back(stHostPort, 1238);
+		ebHostPort = env->addEditBox(gGameConfig->serverport.data(), Scale(110, 395, 250, 420), true, tDuelSettings, EDITBOX_PORT_BOX);
+		ebHostPort->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+		stHostNotes = env->addStaticText(gDataManager->GetSysString(2024).data(), Scale(10, 400, 220, 420), false, false, tDuelSettings);
+		defaultStrings.emplace_back(stHostNotes, 2024);
+		stHostNotes->setVisible(false);
+		ebHostNotes = env->addEditBox(L"", Scale(110, 395, 250, 420), true, tDuelSettings);
+		ebHostNotes->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
+		ebHostNotes->setVisible(false);
+
 		wRules = env->addWindow(Scale(630, 100, 1000, 310), false, L"");
 		wRules->getCloseButton()->setVisible(false);
 		wRules->setDrawTitlebar(false);
@@ -1154,59 +1210,64 @@ void Game::PopulateGameHostWindows() {
 		wRules->setVisible(false);
 		btnRulesOK = env->addButton(Scale(135, 175, 235, 200), wRules, BUTTON_RULE_OK, gDataManager->GetSysString(1211).data());
 		defaultStrings.emplace_back(btnRulesOK, 1211);
-		for(int i = 0; i < sizeofarr(chkRules); ++i) {
-			chkRules[i] = env->addCheckBox(false, Scale(10 + (i % 2) * 150, 10 + (i / 2) * 20, 200 + (i % 2) * 120, 30 + (i / 2) * 20), wRules, CHECKBOX_EXTRA_RULE, gDataManager->GetSysString(1132 + i).data());
-			defaultStrings.emplace_back(chkRules[i], 1132 + i);
+		for(int i = 0, str = 1132; i < static_cast<int>(sizeofarr(chkRules)); ++str) {
+			chkRules[i] = env->addCheckBox(false, Scale(10 + (i % 2) * 150, 10 + (i / 2) * 20, 200 + (i % 2) * 120, 30 + (i / 2) * 20), wRules, CHECKBOX_EXTRA_RULE, gDataManager->GetSysString(str).data());
+			defaultStrings.emplace_back(chkRules[i], str);
+			++i;
 		}
 		extra_rules = gGameConfig->lastExtraRules;
 		UpdateExtraRules(true);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1236).data(), Scale(20, 130, 220, 150), false, false, tCreateHost), 1236);
-		cbDuelRule = AddComboBox(env, Scale(140, 125, 300, 150), tCreateHost, COMBOBOX_DUEL_RULE);
-
-
-		chkNoCheckDeck = env->addCheckBox(gGameConfig->noCheckDeck, Scale(20, 160, 170, 180), tCreateHost, -1, gDataManager->GetSysString(1229).data());
-		defaultStrings.emplace_back(chkNoCheckDeck, 1229);
-
-		chkNoShuffleDeck = env->addCheckBox(gGameConfig->noShuffleDeck, Scale(180, 160, 360, 180), tCreateHost, -1, gDataManager->GetSysString(1230).data());
-		defaultStrings.emplace_back(chkNoShuffleDeck, 1230);
-
-		chkTcgRulings = env->addCheckBox(duel_param & DUEL_TCG_SEGOC_NONPUBLIC, Scale(20, 190, 170, 210), tCreateHost, TCG_SEGOC_NONPUBLIC, gDataManager->GetSysString(1239).data());
-		defaultStrings.emplace_back(chkTcgRulings, 1239);
-
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1231).data(), Scale(20, 220, 320, 240), false, false, tCreateHost), 1231);
-		ebStartLP = env->addEditBox(WStr(gGameConfig->startLP), Scale(140, 215, 220, 240), true, tCreateHost, EDITBOX_NUMERIC);
-		ebStartLP->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1232).data(), Scale(20, 250, 320, 270), false, false, tCreateHost), 1232);
-		ebStartHand = env->addEditBox(WStr(gGameConfig->startHand), Scale(140, 245, 220, 270), true, tCreateHost, EDITBOX_NUMERIC);
-		ebStartHand->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1233).data(), Scale(20, 280, 320, 300), false, false, tCreateHost), 1233);
-		ebDrawCount = env->addEditBox(WStr(gGameConfig->drawCount), Scale(140, 275, 220, 300), true, tCreateHost, EDITBOX_NUMERIC);
-		ebDrawCount->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1234).data(), Scale(10, 310, 220, 330), false, false, tCreateHost), 1234);
-		ebServerName = env->addEditBox(gGameConfig->gamename.data(), Scale(110, 305, 250, 330), true, tCreateHost);
-		ebServerName->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1235).data(), Scale(10, 340, 220, 360), false, false, tCreateHost), 1235);
-		ebServerPass = env->addEditBox(L"", Scale(110, 335, 250, 360), true, tCreateHost);
-		ebServerPass->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		btnHostConfirm = env->addButton(Scale(260, 335, 370, 360), tCreateHost, BUTTON_HOST_CONFIRM, gDataManager->GetSysString(1211).data());
-		defaultStrings.emplace_back(btnHostConfirm, 1211);
-		btnHostCancel = env->addButton(Scale(260, 365, 370, 390), tCreateHost, BUTTON_HOST_CANCEL, gDataManager->GetSysString(1212).data());
-		defaultStrings.emplace_back(btnHostCancel, 1212);
-		stHostPort = env->addStaticText(gDataManager->GetSysString(1238).data(), Scale(10, 370, 220, 390), false, false, tCreateHost);
-		defaultStrings.emplace_back(stHostPort, 1238);
-		ebHostPort = env->addEditBox(gGameConfig->serverport.data(), Scale(110, 365, 250, 390), true, tCreateHost, EDITBOX_PORT_BOX);
-		ebHostPort->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		stHostNotes = env->addStaticText(gDataManager->GetSysString(2024).data(), Scale(10, 370, 220, 390), false, false, tCreateHost);
-		defaultStrings.emplace_back(stHostNotes, 2024);
-		stHostNotes->setVisible(false);
-		ebHostNotes = env->addEditBox(L"", Scale(110, 365, 250, 390), true, tCreateHost);
-		ebHostNotes->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER);
-		ebHostNotes->setVisible(false);
 	}
 
 	{
+		irr::s32 cur_y = 15;
+		constexpr auto y_incr = 30;
+		auto GetNextRect = [&cur_y, y_incr, this] {
+			auto cur = cur_y;
+			cur_y += y_incr;
+			return Scale<irr::s32>(20, cur, 360, cur + 25);
+		};
+		auto GetCurrentRectWithXOffset = [&cur_y, this](irr::s32 x1, irr::s32 x2) {
+			return Scale<irr::s32>(x1, cur_y, x2, cur_y + 25);
+		};
 
-		duel_param = gGameConfig->lastDuelParam;
+		auto tDeckSettings = wtcCreateHost->addTab(gDataManager->GetSysString(12105).data());
+		defaultStrings.emplace_back(tDeckSettings, 12105);
+
+		chkNoShuffleDeckSecondary = env->addCheckBox(gGameConfig->noShuffleDeck, GetNextRect(), tDeckSettings, DONT_SHUFFLE_DECK, gDataManager->GetSysString(1230).data());
+		defaultStrings.emplace_back(chkNoShuffleDeckSecondary, 1230);
+		menuHandler.MakeElementSynchronized(chkNoShuffleDeckSecondary);
+
+		chkNoCheckDeckContentSecondary = env->addCheckBox(gGameConfig->noCheckDeckContent, GetNextRect(), tDeckSettings, DONT_CHECK_DECK_CONTENT, gDataManager->GetSysString(1229).data());
+		defaultStrings.emplace_back(chkNoCheckDeckContentSecondary, 1229);
+		menuHandler.MakeElementSynchronized(chkNoCheckDeckContentSecondary);
+
+		chkNoCheckDeckSizeSecondary = env->addCheckBox(gGameConfig->noCheckDeckSize, GetNextRect(), tDeckSettings, DONT_CHECK_DECK_SIZE, gDataManager->GetSysString(12113).data());
+		defaultStrings.emplace_back(chkNoCheckDeckSizeSecondary, 12113);
+		menuHandler.MakeElementSynchronized(chkNoCheckDeckSizeSecondary);
+		
+#define ADD_DECK_SIZE_CHECKBOXES(deck) do { \
+		eb##deck##Min = env->addEditBox(WStr(gGameConfig->min##deck##DeckSize), GetCurrentRectWithXOffset(310, 360), true, tDeckSettings, EDITBOX_NUMERIC); \
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(12106 + idx).data(), GetCurrentRectWithXOffset(20, 300), false, false, tDeckSettings), 12106 + idx); \
+		eb##deck##Min->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER); \
+		cur_y += y_incr; \
+		++idx; \
+		eb##deck##Max = env->addEditBox(WStr(gGameConfig->max##deck##DeckSize), GetCurrentRectWithXOffset(310, 360), true, tDeckSettings, EDITBOX_NUMERIC); \
+		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(12106 + idx).data(), GetCurrentRectWithXOffset(20, 300), false, false, tDeckSettings), 12106 + idx); \
+		eb##deck##Max->setTextAlignment(irr::gui::EGUIA_CENTER, irr::gui::EGUIA_CENTER); \
+		cur_y += y_incr; \
+		++idx; \
+	} while(0)
+		{
+			int idx = 0;
+			ADD_DECK_SIZE_CHECKBOXES(Main);
+			ADD_DECK_SIZE_CHECKBOXES(Extra);
+			ADD_DECK_SIZE_CHECKBOXES(Side);
+#undef ADD_DECK_SIZE_CHECKBOXES
+		}
+	}
+
+	{
 		forbiddentypes = gGameConfig->lastDuelForbidden;
 		auto tCustomRules = wtcCreateHost->addTab(gDataManager->GetSysString(1630).data());
 		defaultStrings.emplace_back(tCustomRules, 1630);
@@ -1224,7 +1285,7 @@ void Game::PopulateGameHostWindows() {
 
 		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1629).data(), rectsize(), false, false, crPanel), 1629);
 
-		for(int i = 0; i < sizeofarr(chkCustomRules); ++i) {
+		for(auto i = 0u; i < sizeofarr(chkCustomRules); ++i) {
 			bool set = false;
 			if(i == 19)
 				set = duel_param & DUEL_USE_TRAPS_IN_NEW_CHAIN;
@@ -1242,7 +1303,7 @@ void Game::PopulateGameHostWindows() {
 		defaultStrings.emplace_back(env->addStaticText(gDataManager->GetSysString(1628).data(), rectsize(), false, false, crPanel), 1628);
 		static constexpr uint32_t limits[]{ TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
 #define TYPECHK(id,stringid)\
-	chkTypeLimit[id] = env->addCheckBox(forbiddentypes & limits[id], rectsize(), crPanel, -1, fmt::sprintf(gDataManager->GetSysString(1627), gDataManager->GetSysString(stringid)).data());
+	chkTypeLimit[id] = env->addCheckBox(forbiddentypes & limits[id], rectsize(), crPanel, -1, epro::sprintf(gDataManager->GetSysString(1627), gDataManager->GetSysString(stringid)).data());
 		TYPECHK(0, 1056);
 		TYPECHK(1, 1063);
 		TYPECHK(2, 1073);
@@ -1302,7 +1363,7 @@ void Game::PopulateGameHostWindows() {
 	defaultStrings.emplace_back(gBot.btnAdd, 2054);
 	btnHostPrepOB = env->addButton(Scale(10, 180, 110, 205), wHostPrepare, BUTTON_HP_OBSERVER, gDataManager->GetSysString(1252).data());
 	defaultStrings.emplace_back(btnHostPrepOB, 1252);
-	stHostPrepOB = env->addStaticText(fmt::format(L"{} 0", gDataManager->GetSysString(1253)).data(), Scale(10, 210, 270, 230), false, false, wHostPrepare);
+	stHostPrepOB = env->addStaticText(epro::format(L"{} 0", gDataManager->GetSysString(1253)).data(), Scale(10, 210, 270, 230), false, false, wHostPrepare);
 	defaultStrings.emplace_back(stHostPrepOB, 1253);
 	stHostPrepRule = irr::gui::CGUICustomText::addCustomText(L"", false, env, wHostPrepare, -1, Scale(280, 30, 460, 270));
 	stHostPrepRule->setWordWrap(true);
@@ -1310,8 +1371,6 @@ void Game::PopulateGameHostWindows() {
 	defaultStrings.emplace_back(stDeckSelect, 1254);
 	cbDeckSelect = AddComboBox(env, Scale(120, 230, 270, 255), wHostPrepare);
 	cbDeckSelect->setMaxSelectionRows(10);
-	cbDeckSelect2 = AddComboBox(env, Scale(280, 230, 430, 255), wHostPrepare);
-	cbDeckSelect2->setMaxSelectionRows(10);
 	btnHostPrepReady = env->addButton(Scale(170, 180, 270, 205), wHostPrepare, BUTTON_HP_READY, gDataManager->GetSysString(1218).data());
 	defaultStrings.emplace_back(btnHostPrepReady, 1218);
 	btnHostPrepNotReady = env->addButton(Scale(170, 180, 270, 205), wHostPrepare, BUTTON_HP_NOTREADY, gDataManager->GetSysString(1219).data());
@@ -1458,10 +1517,12 @@ void Game::PopulateTabSettingsWindow() {
 			tabSettings.scrMusicVolume->setSmallStep(1);
 			cur_y += y_incr;
 		}
-		// end audio
 		tabSettings.chkNoChainDelay = env->addCheckBox(gGameConfig->chkWaitChain, GetNextRect(), tabPanel, CHECKBOX_NO_CHAIN_DELAY, gDataManager->GetSysString(1277).data());
 		menuHandler.MakeElementSynchronized(tabSettings.chkNoChainDelay);
 		defaultStrings.emplace_back(tabSettings.chkNoChainDelay, 1277);
+		tabSettings.chkIgnoreDeckContents = env->addCheckBox(gGameConfig->ignoreDeckContents, GetNextRect(), tabPanel, CHECKBOX_IGNORE_DECK_CONTENTS, gDataManager->GetSysString(1277).data());
+		menuHandler.MakeElementSynchronized(tabSettings.chkIgnoreDeckContents);
+		defaultStrings.emplace_back(tabSettings.chkIgnoreDeckContents, 12119);
 		// Check OnResize for button placement information
 		cur_y += 5;
 		btnTabShowSettings = env->addButton(GetNextRect(), tabPanel, BUTTON_SHOW_SETTINGS, gDataManager->GetSysString(2059).data());
@@ -1529,9 +1590,8 @@ void Game::PopulateSettingsWindow() {
 			defaultStrings.emplace_back(gSettings.stCurrentSkin, 2064);
 			gSettings.cbCurrentSkin = AddComboBox(env, GetCurrentRectWithXOffset(95, 320), sPanel, COMBOBOX_CURRENT_SKIN);
 			ReloadCBCurrentSkin();
+			IncrementXorY();
 		}
-		gSettings.btnReloadSkin = env->addButton(GetNextRect(), sPanel, BUTTON_RELOAD_SKIN, gDataManager->GetSysString(2066).data());
-		defaultStrings.emplace_back(gSettings.btnReloadSkin, 2066);
 		{
 			gSettings.stCurrentLocale = env->addStaticText(gDataManager->GetSysString(2067).data(), GetCurrentRectWithXOffset(15, 90), false, true, sPanel);
 			defaultStrings.emplace_back(gSettings.stCurrentLocale, 2067);
@@ -1548,6 +1608,8 @@ void Game::PopulateSettingsWindow() {
 			gSettings.cbCurrentLocale->setSelected(selectedLocale);
 			IncrementXorY();
 		}
+		gSettings.btnReloadSkin = env->addButton(GetNextRect(), sPanel, BUTTON_RELOAD_SKIN, gDataManager->GetSysString(2066).data());
+		defaultStrings.emplace_back(gSettings.btnReloadSkin, 2066);
 		{
 			gSettings.stDpiScale = env->addStaticText(gDataManager->GetSysString(2070).data(), GetCurrentRectWithXOffset(15, 90), false, false, sPanel);
 			defaultStrings.emplace_back(gSettings.stDpiScale, 2070);
@@ -1566,6 +1628,9 @@ void Game::PopulateSettingsWindow() {
 		defaultStrings.emplace_back(gSettings.chkHideHandsInReplays, 2080);
 		gSettings.chkConfirmDeckClear = env->addCheckBox(gGameConfig->confirm_clear_deck, GetNextRect(), sPanel, CHECKBOX_CONFIRM_DECK_CLEAR, gDataManager->GetSysString(12104).data());
 		defaultStrings.emplace_back(gSettings.chkConfirmDeckClear, 12104);
+		gSettings.chkIgnoreDeckContents = env->addCheckBox(gGameConfig->ignoreDeckContents, GetNextRect(), sPanel, CHECKBOX_IGNORE_DECK_CONTENTS, gDataManager->GetSysString(12119).data());
+		menuHandler.MakeElementSynchronized(gSettings.chkIgnoreDeckContents);
+		defaultStrings.emplace_back(gSettings.chkIgnoreDeckContents, 12119);
 	}
 
 	{
@@ -1689,8 +1754,14 @@ void Game::PopulateSettingsWindow() {
 			gSettings.ebAntiAlias = env->addEditBox(WStr(gGameConfig->antialias), GetCurrentRectWithXOffset(225, 320), true, sPanel, EDITBOX_NUMERIC);
 			IncrementXorY();
 		}
-		gSettings.chkVSync = env->addCheckBox(gGameConfig->vsync, GetNextRect(), sPanel, CHECKBOX_VSYNC, gDataManager->GetSysString(2073).data());
-		defaultStrings.emplace_back(gSettings.chkVSync, 2073);
+		{
+			gSettings.stVSync = env->addStaticText(gDataManager->GetSysString(2073).data(), GetCurrentRectWithXOffset(15, 105), false, true, sPanel);
+			defaultStrings.emplace_back(gSettings.stVSync, 2073);
+			gSettings.cbVSync = AddComboBox(env, GetCurrentRectWithXOffset(110, 320), sPanel, COMBOBOX_VSYNC);
+			ReloadCBVsync();
+			gSettings.cbVSync->setSelected(gGameConfig->vsync);
+			IncrementXorY();
+		}
 		{
 			gSettings.stFPSCap = env->addStaticText(gDataManager->GetSysString(2074).data(), GetCurrentRectWithXOffset(15, 220), false, true, sPanel);
 			defaultStrings.emplace_back(gSettings.stFPSCap, 2074);
@@ -1759,7 +1830,6 @@ void Game::PopulateSettingsWindow() {
 			gSettings.ebImageDownloadThreads = env->addEditBox(WStr(gGameConfig->imageDownloadThreads), GetCurrentRectWithXOffset(275, 320), true, sPanel, EDITBOX_NUMERIC);
 			IncrementXorY();
 		}
-		gSettings.chkShowConsole = env->addCheckBox(gGameConfig->showConsole, GetNextRect(), sPanel, -1, gDataManager->GetSysString(2072).data());
 #ifdef DISCORD_APP_ID
 		gSettings.chkDiscordIntegration = env->addCheckBox(gGameConfig->discordIntegration, GetNextRect(), sPanel, CHECKBOX_DISCORD_INTEGRATION, gDataManager->GetSysString(2078).data());
 		defaultStrings.emplace_back(gSettings.chkDiscordIntegration, 2078);
@@ -1974,8 +2044,7 @@ bool Game::MainLoop() {
 		bool resized = false;
 		auto size = driver->getScreenSize();
 #if defined (__linux__) && !defined(__ANDROID__)
-		prev_window_size = window_size;
-		window_size = size;
+		prev_window_size = std::exchange(window_size, size);
 		if(prev_window_size != window_size && !last_resize && prev_window_size.Width != 0 && prev_window_size.Height != 0) {
 			last_resize = true;
 		} else if((prev_window_size == window_size && last_resize) || (prev_window_size.Width == 0 && prev_window_size.Height == 0)) {
@@ -1998,7 +2067,7 @@ bool Game::MainLoop() {
 				HideElement(wMessage);
 			RefreshUICoreVersion();
 			env->setFocus(stACMessage);
-			stACMessage->setText(fmt::format(gDataManager->GetSysString(1431), corename).data());
+			stACMessage->setText(epro::format(gDataManager->GetSysString(1431), corename).data());
 			PopupElement(wACMessage, 30);
 			coreJustLoaded = false;
 		}
@@ -2039,7 +2108,10 @@ bool Game::MainLoop() {
 			else
 				gSoundManager->PlayBGM(SoundManager::BGM::DUEL, gGameConfig->loopMusic);
 			EnableMaterial2D(true);
-			DrawBackImage(imageManager.tBackGround, resized);
+			if(current_topdown)
+				DrawBackImage(imageManager.tBackGround_duel_topdown, resized);
+			else
+				DrawBackImage(imageManager.tBackGround, resized);
 			DrawBackGround();
 			DrawCards();
 			DrawMisc();
@@ -2123,13 +2195,24 @@ bool Game::MainLoop() {
 			DuelClient::try_needed = false;
 			DuelClient::StartClient(DuelClient::temp_ip, DuelClient::temp_port, dInfo.secret.game_id, false);
 		}
-		popupCheck.lock();
-		if(queued_msg.size()) {
-			env->addMessageBox(queued_caption.data(), queued_msg.data());
-			queued_msg.clear();
-			queued_caption.clear();
+		{
+			std::lock_guard<epro::mutex> lk(popupCheck);
+			if(queued_msg.size()) {
+				env->addMessageBox(queued_caption.data(), queued_msg.data());
+				queued_msg.clear();
+				queued_caption.clear();
+			}
 		}
-		popupCheck.unlock();
+		{
+			std::lock_guard<epro::mutex> lk(progressStatusLock);
+			if(progressStatus.newFile) {
+				updateProgressText->setText(progressStatus.progressText.data());
+				updateProgressTop->setVisible(!progressStatus.subProgressText.empty());
+				updateSubprogressText->setText(progressStatus.subProgressText.data());
+			}
+			updateProgressTop->setProgress(progressStatus.progressTop);
+			updateProgressBottom->setProgress(progressStatus.progressBottom);
+		}
 		discord.Check();
 		if(discord.IsConnected() && !was_connected) {
 			was_connected = true;
@@ -2146,14 +2229,14 @@ bool Game::MainLoop() {
 			if(!update_prompted && gClientUpdater->HasUpdate() && !(dInfo.isInDuel || dInfo.isInLobby || is_siding
 				|| wRoomListPlaceholder->isVisible() || wLanWindow->isVisible()
 				|| wCreateHost->isVisible() || wHostPrepare->isVisible())) {
-				std::lock_guard<std::mutex> lock(gMutex);
+				std::lock_guard<epro::mutex> lock(gMutex);
 				menuHandler.prev_operation = ACTION_UPDATE_PROMPT;
-				stQMessage->setText(fmt::format(L"{}\n{}", gDataManager->GetSysString(1460), gDataManager->GetSysString(1461)).data());
+				stQMessage->setText(epro::format(L"{}\n{}", gDataManager->GetSysString(1460), gDataManager->GetSysString(1461)).data());
 				SetCentered(wQuery);
 				PopupElement(wQuery);
 				update_prompted = true;
 			} else if (show_changelog) {
-				std::lock_guard<std::mutex> lock(gMutex);
+				std::lock_guard<epro::mutex> lock(gMutex);
 				menuHandler.prev_operation = ACTION_SHOW_CHANGELOG;
 				stQMessage->setText(gDataManager->GetSysString(1451).data());
 				SetCentered(wQuery);
@@ -2162,7 +2245,7 @@ bool Game::MainLoop() {
 			}
 #if defined(__linux__) && !defined(__ANDROID__) && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
 			else if(gGameConfig->useWayland == 2) {
-				std::lock_guard<std::mutex> lock(gMutex);
+				std::lock_guard<epro::mutex> lock(gMutex);
 				menuHandler.prev_operation = ACTION_TRY_WAYLAND;
 				stQMessage->setText(L"Do you want to try the new native wayland backend?\nIf you're having issues after enabling it manually change the useWayland option in your system.conf file.");
 				SetCentered(wQuery);
@@ -2173,7 +2256,7 @@ bool Game::MainLoop() {
 		}
 #if defined(EDOPRO_MACOS) && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
 		if(!wMessage->isVisible() && gGameConfig->useIntegratedGpu == 2) {
-			std::lock_guard<std::mutex> lock(gMutex);
+			std::lock_guard<epro::mutex> lock(gMutex);
 			gGameConfig->useIntegratedGpu = 1;
 			SaveConfig();
 			stMessage->setText(L"The game is using the integrated gpu, if you want it to use the dedicated one change it from the settings.");
@@ -2205,24 +2288,24 @@ bool Game::MainLoop() {
 			if(delta > 0) {
 				int64_t t = timer->getRealTime();
 				while((timer->getRealTime() - t) < delta) {
-					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+					epro::this_thread::sleep_for(std::chrono::milliseconds(1));
 				}
 			}
 		}
 		while(cur_time >= 1000) {
-			fpsCounter->setText(fmt::format(gDataManager->GetSysString(1444), fps).data());
+			fpsCounter->setText(epro::format(gDataManager->GetSysString(1444), fps).data());
 			fps = 0;
 			cur_time -= 1000;
 			if(dInfo.time_player == 0 || dInfo.time_player == 1)
 				if(dInfo.time_left[dInfo.time_player])
 					dInfo.time_left[dInfo.time_player]--;
 		}
-		if(gGameConfig->maxFPS != -1 || gGameConfig->vsync)
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		if(gGameConfig->maxFPS != -1)
+			epro::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	discord.UpdatePresence(DiscordWrapper::TERMINATE);
 	{
-		std::lock_guard<std::mutex> lk(gMutex);
+		std::lock_guard<epro::mutex> lk(gMutex);
 		replaySignal.SetNoWait(true);
 		actionSignal.SetNoWait(true);
 		closeDoneSignal.SetNoWait(true);
@@ -2310,7 +2393,7 @@ bool Game::ApplySkin(const epro::path_string& skinname, bool reload, bool firstr
 #include "custom_skin_enum.inl"
 #undef DECLR
 #undef CLR
-			imageManager.ChangeTextures(fmt::format(EPRO_TEXT("./skin/{}/textures/"), prev_skin));
+			imageManager.ChangeTextures(epro::format(EPRO_TEXT("./skin/{}/textures/"), prev_skin));
 		} else {
 			if(firstrun)
 				return false;
@@ -2369,9 +2452,9 @@ void Game::RefreshDeck(irr::gui::IGUIComboBox* cbDeck) {
 		file.erase(file.size() - 4);
 		cbDeck->addItem(Utils::ToUnicodeIfNeeded(file).data());
 	}
-	for(size_t i = 0; i < cbDeck->getItemCount(); ++i) {
+	for(irr::u32 i = 0; i < cbDeck->getItemCount(); ++i) {
 		if(gGameConfig->lastdeck == cbDeck->getItem(i)) {
-			cbDeck->setSelected(i);
+			cbDeck->setSelected(static_cast<irr::s32>(i));
 			break;
 		}
 	}
@@ -2383,7 +2466,7 @@ void Game::RefreshLFLists() {
 	cbDBLFList->setSelected(0);
 	auto prevFilter = std::max(0, cbFilterBanlist->getSelected());
 	cbFilterBanlist->clear();
-	cbFilterBanlist->addItem(fmt::format(L"[{}]", gDataManager->GetSysString(1226)).data());
+	cbFilterBanlist->addItem(epro::format(L"[{}]", gDataManager->GetSysString(1226)).data());
 	for (auto &list : gdeckManager->_lfList) {
 		auto hostIndex = cbHostLFList->addItem(list.listName.data(), list.hash);
 		auto deckIndex = cbDBLFList->addItem(list.listName.data(), list.hash);
@@ -2398,7 +2481,7 @@ void Game::RefreshLFLists() {
 }
 void Game::RefreshAiDecks() {
 	gBot.bots.clear();
-	std::ifstream windbots("./WindBot/bots.json");
+	FileStream windbots("./WindBot/bots.json", FileStream::in);
 	if (windbots.good()) {
 		nlohmann::json j;
 		try {
@@ -2425,7 +2508,7 @@ void Game::RefreshAiDecks() {
 					WindBot bot;
 					bot.name = BufferIO::DecodeUTF8(obj.at("name").get_ref<std::string&>());
 					bot.deck = BufferIO::DecodeUTF8(obj.at("deck").get_ref<std::string&>());
-					bot.deckfile = fmt::format(L"AI_{}", bot.deck);
+					bot.deckfile = epro::format(L"AI_{}", bot.deck);
 					bot.difficulty = obj.at("difficulty").get<int>();
 					for(auto& masterRule : obj.at("masterRules")) {
 						if(masterRule.is_number()) {
@@ -2477,10 +2560,17 @@ void Game::SaveConfig() {
 	TrySaveInt(gGameConfig->startLP, ebStartLP);
 	TrySaveInt(gGameConfig->startHand, ebStartHand);
 	TrySaveInt(gGameConfig->drawCount, ebDrawCount);
+	TrySaveInt(gGameConfig->minMainDeckSize, ebMainMin);
+	TrySaveInt(gGameConfig->maxMainDeckSize, ebMainMax);
+	TrySaveInt(gGameConfig->minExtraDeckSize, ebExtraMin);
+	TrySaveInt(gGameConfig->maxExtraDeckSize, ebExtraMax);
+	TrySaveInt(gGameConfig->minSideDeckSize, ebSideMin);
+	TrySaveInt(gGameConfig->maxSideDeckSize, ebSideMax);
 	TrySaveInt(gGameConfig->antialias, gSettings.ebAntiAlias);
 	gGameConfig->showConsole = gSettings.chkShowConsole->isChecked();
 	gGameConfig->relayDuel = btnRelayMode->isPressed();
-	gGameConfig->noCheckDeck = chkNoCheckDeck->isChecked();
+	gGameConfig->noCheckDeckContent = chkNoCheckDeckContent->isChecked();
+	gGameConfig->noCheckDeckSize = chkNoCheckDeckSize->isChecked();
 	gGameConfig->noShuffleDeck = chkNoShuffleDeck->isChecked();
 	gGameConfig->botThrowRock = gBot.chkThrowRock->isChecked();
 	gGameConfig->botMute = gBot.chkMute->isChecked();
@@ -2572,9 +2662,9 @@ void Game::UpdateRepoInfo(const GitRepo* repo, RepoGui* grepo) {
 		grepo->history_button2->setText(gDataManager->GetSysString(1434).data());
 		defaultStrings.emplace_back(grepo->history_button2, 1434);
 		grepo->history_button2->setEnabled(true);
-		grepo->commit_history_full = fmt::format(L"{}\n{}",
-												fmt::format(gDataManager->GetSysString(1435), BufferIO::DecodeUTF8(repo->url)),
-												fmt::format(gDataManager->GetSysString(1436), BufferIO::DecodeUTF8(repo->history.error))
+		grepo->commit_history_full = epro::format(L"{}\n{}",
+												epro::format(gDataManager->GetSysString(1435), BufferIO::DecodeUTF8(repo->url)),
+												epro::format(gDataManager->GetSysString(1436), BufferIO::DecodeUTF8(repo->history.error))
 		);
 		grepo->commit_history_partial = grepo->commit_history_full;
 		return;
@@ -2599,7 +2689,7 @@ void Game::UpdateRepoInfo(const GitRepo* repo, RepoGui* grepo) {
 			defaultStrings.emplace_back(grepo->history_button1, 1448);
 			grepo->history_button2->setText(gDataManager->GetSysString(1448).data());
 			defaultStrings.emplace_back(grepo->history_button2, 1448);
-			grepo->commit_history_partial = fmt::format(L"{}\n{}\n\n{}",
+			grepo->commit_history_partial = epro::format(L"{}\n{}\n\n{}",
 				gDataManager->GetSysString(1449),
 				gDataManager->GetSysString(1450),
 				BufferIO::DecodeUTF8(repo->history.warning));
@@ -2638,9 +2728,9 @@ void Game::LoadServers() {
 					tmp_server.roomlistport = obj.at("roomlistport").get<uint16_t>();
 					tmp_server.duelport = obj.at("duelport").get<uint16_t>();
 					{
-						auto it = obj.find("roomlistprotocol");
-						if(it != obj.end() && it->is_string()) {
-							tmp_server.protocol = ServerInfo::GetProtocol(it->get_ref<std::string&>());
+						auto protocolIt = obj.find("roomlistprotocol");
+						if(protocolIt != obj.end() && protocolIt->is_string()) {
+							tmp_server.protocol = ServerInfo::GetProtocol(protocolIt->get_ref<std::string&>());
 						}
 					}
 					int i = serverChoice->addItem(tmp_server.name.data());
@@ -2657,6 +2747,16 @@ void Game::LoadServers() {
 }
 void Game::ShowCardInfo(uint32_t code, bool resize, imgType type) {
 	static auto prevtype = imgType::ART;
+	if(resize) {
+		//Update the text fields beforehand when resizing so that their horizontal size
+		//is correct when the text is set and is then broken into pieces
+		const auto widthRect = irr::core::recti(Scale(15), 0, Scale(287 * window_scale.X), 10);
+		stInfo->setRelativePosition(widthRect);
+		stDataInfo->setRelativePosition(widthRect);
+		stSetName->setRelativePosition(widthRect);
+		stPasscodeScope->setRelativePosition(widthRect);
+		stText->setRelativePosition(widthRect);
+	};
 	if(code == 0) {
 		ClearCardInfo(0);
 		return;
@@ -2683,7 +2783,7 @@ void Game::ShowCardInfo(uint32_t code, bool resize, imgType type) {
 	if(cd->IsInArtworkOffsetRange())
 		tmp_code = cd->alias;
 	stName->setText(gDataManager->GetName(tmp_code).data());
-	stPasscodeScope->setText(fmt::format(L"[{:08}] {}", tmp_code, gDataManager->FormatScope(cd->ot)).data());
+	stPasscodeScope->setText(epro::format(L"[{:08}] {}", tmp_code, gDataManager->FormatScope(cd->ot)).data());
 	stSetName->setText(L"");
 	auto setcodes = cd->setcodes;
 	if (cd->alias) {
@@ -2692,41 +2792,41 @@ void Game::ShowCardInfo(uint32_t code, bool resize, imgType type) {
 			setcodes = data->setcodes;
 	}
 	if (setcodes.size()) {
-		stSetName->setText(fmt::format(L"{}{}", gDataManager->GetSysString(1329), gDataManager->FormatSetName(setcodes)).data());
+		stSetName->setText(epro::format(L"{}{}", gDataManager->GetSysString(1329), gDataManager->FormatSetName(setcodes)).data());
 	}
 	if(cd->type & TYPE_MONSTER) {
-		stInfo->setText(fmt::format(L"[{}] {} {}", gDataManager->FormatType(cd->type), gDataManager->FormatAttribute(cd->attribute), gDataManager->FormatRace(cd->race)).data());
+		stInfo->setText(epro::format(L"[{}] {} {}", gDataManager->FormatType(cd->type), gDataManager->FormatAttribute(cd->attribute), gDataManager->FormatRace(cd->race)).data());
 		std::wstring text;
 		if(cd->type & TYPE_LINK){
 			if(cd->attack < 0)
-				text.append(fmt::format(L"?/LINK {}	  ", cd->level));
+				text.append(epro::format(L"?/LINK {}	  ", cd->level));
 			else
-				text.append(fmt::format(L"{}/LINK {}   ", cd->attack, cd->level));
+				text.append(epro::format(L"{}/LINK {}   ", cd->attack, cd->level));
 			text.append(gDataManager->FormatLinkMarker(cd->link_marker));
 		} else {
-			text.append(fmt::format(L"[{}{}] ", (cd->type & TYPE_XYZ) ? L"\u2606" : L"\u2605", cd->level));
+			text.append(epro::format(L"[{}{}] ", (cd->type & TYPE_XYZ) ? L"\u2606" : L"\u2605", cd->level));
 			if (cd->attack < 0 && cd->defense < 0)
 				text.append(L"?/?");
 			else if (cd->attack < 0)
-				text.append(fmt::format(L"?/{}", cd->defense));
+				text.append(epro::format(L"?/{}", cd->defense));
 			else if (cd->defense < 0)
-				text.append(fmt::format(L"{}/?", cd->attack));
+				text.append(epro::format(L"{}/?", cd->attack));
 			else
-				text.append(fmt::format(L"{}/{}", cd->attack, cd->defense));
+				text.append(epro::format(L"{}/{}", cd->attack, cd->defense));
 		}
 		if(cd->type & TYPE_PENDULUM) {
-			text.append(fmt::format(L"   {}/{}", cd->lscale, cd->rscale));
+			text.append(epro::format(L"   {}/{}", cd->lscale, cd->rscale));
 		}
 		stDataInfo->setText(text.data());
 	} else {
 		if(cd->type & TYPE_SKILL) { // TYPE_SKILL created by hints
 			// Hack: Race encodes the character for now
-			stInfo->setText(fmt::format(L"[{}|{}]", gDataManager->FormatRace(cd->race, true), gDataManager->FormatType(cd->type)).data());
+			stInfo->setText(epro::format(L"[{}|{}]", gDataManager->FormatRace(cd->race, true), gDataManager->FormatType(cd->type)).data());
 		} else {
-			stInfo->setText(fmt::format(L"[{}]", gDataManager->FormatType(cd->type)).data());
+			stInfo->setText(epro::format(L"[{}]", gDataManager->FormatType(cd->type)).data());
 		}
 		if(cd->type & TYPE_LINK) {
-			stDataInfo->setText(fmt::format(L"LINK {}   {}", cd->level, gDataManager->FormatLinkMarker(cd->link_marker)).data());
+			stDataInfo->setText(epro::format(L"LINK {}   {}", cd->level, gDataManager->FormatLinkMarker(cd->link_marker)).data());
 		} else
 			stDataInfo->setText(L"");
 	}
@@ -2792,7 +2892,7 @@ void Game::AddChatMsg(epro::wstringview msg, int player, int type) {
 				sender = gDataManager->GetSysString(1441);
 		}
 	}
-	chatMsg[0] = fmt::format(L"{}: {}", sender, msg);
+	chatMsg[0] = epro::format(L"{}: {}", sender, msg);
 	lstChat->addItem(chatMsg[0].data());
 }
 void Game::AddChatMsg(epro::wstringview name, epro::wstringview msg, int type) {
@@ -2818,9 +2918,9 @@ void Game::AddChatMsg(epro::wstringview name, epro::wstringview msg, int type) {
 			chatType[0] = 11;
 	}
 	if(type == STOC_Chat2::PTYPE_DUELIST || type == STOC_Chat2::PTYPE_OBS)
-		chatMsg[0] = fmt::format(L"{}: {}", name, msg);
+		chatMsg[0] = epro::format(L"{}: {}", name, msg);
 	else
-		chatMsg[0] = fmt::format(L"System: {}", msg);
+		chatMsg[0] = epro::format(L"System: {}", msg);
 	lstChat->addItem(chatMsg[0].data());
 	gSoundManager->PlaySoundEffect(SoundManager::SFX::CHAT);
 }
@@ -2910,7 +3010,7 @@ void Game::CloseDuelWindow() {
 	closeDoneSignal.Set();
 }
 void Game::PopupMessage(epro::wstringview text, epro::wstringview caption) {
-	std::lock_guard<std::mutex> lock(popupCheck);
+	std::lock_guard<epro::mutex> lock(popupCheck);
 	queued_msg = text.data();
 	queued_caption = caption.data();
 }
@@ -2926,7 +3026,7 @@ uint8_t Game::LocalPlayer(uint8_t player) {
 void Game::UpdateDuelParam() {
 	ReloadCBDuelRule();
 	uint64_t flag = 0;
-	for(int i = 0; i < sizeofarr(chkCustomRules); ++i) {
+	for(auto i = 0u; i < sizeofarr(chkCustomRules); ++i) {
 		if(chkCustomRules[i]->isChecked()) {
 			if(i == 19)
 				flag |= DUEL_USE_TRAPS_IN_NEW_CHAIN;
@@ -2942,7 +3042,7 @@ void Game::UpdateDuelParam() {
 	}
 	constexpr uint32_t limits[] = { TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
 	uint32_t flag2 = 0;
-	for (int i = 0; i < sizeofarr(chkTypeLimit); ++i) {
+	for (auto i = 0u; i < sizeofarr(chkTypeLimit); ++i) {
 		if (chkTypeLimit[i]->isChecked()) {
 			flag2 |= limits[i];
 		}
@@ -2950,37 +3050,51 @@ void Game::UpdateDuelParam() {
 	switch (flag) {
 	case DUEL_MODE_SPEED: {
 		cbDuelRule->setSelected(5);
-		if(flag2 == DUEL_MODE_MR5_FORB)
+		if(flag2 == DUEL_MODE_MR5_FORB) {
 			cbDuelRule->removeItem(8);
-		break;
-	}
+			break;
+		}
+	}/*fallthrough*/
 	case DUEL_MODE_RUSH: {
 		cbDuelRule->setSelected(6);
-		if(flag2 == DUEL_MODE_MR5_FORB)
+		if(flag2 == DUEL_MODE_MR5_FORB) {
 			cbDuelRule->removeItem(8);
-		break;
-	}
+			break;
+		}
+	}/*fallthrough*/
 	case DUEL_MODE_GOAT: {
 		cbDuelRule->setSelected(7);
-		if(flag2 == DUEL_MODE_MR1_FORB)
+		if(flag2 == DUEL_MODE_MR1_FORB) {
 			cbDuelRule->removeItem(8);
-		break;
-	}
+			break;
+		}
+	}/*fallthrough*/
 	default:
 		switch(flag & ~DUEL_TCG_SEGOC_NONPUBLIC) {
-	// NOTE: intentional case fallthrough
-	#define CHECK(MR) case DUEL_MODE_MR##MR:{ cbDuelRule->setSelected(MR - 1); if (flag2 == DUEL_MODE_MR##MR##_FORB) { cbDuelRule->removeItem(8); break; } }
-		CHECK(1)
-		CHECK(2)
-		CHECK(3)
-		CHECK(4)
-		CHECK(5)
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#endif
+	#define CHECK(MR) \
+		case DUEL_MODE_MR##MR:{ \
+			cbDuelRule->setSelected(MR - 1); \
+			if (flag2 == DUEL_MODE_MR##MR##_FORB) { \
+				cbDuelRule->removeItem(8); break; } \
+			}
+			CHECK(1)
+			CHECK(2)
+			CHECK(3)
+			CHECK(4)
+			CHECK(5)
 	#undef CHECK
 		default: {
 			cbDuelRule->addItem(gDataManager->GetSysString(1630).data());
 			cbDuelRule->setSelected(8);
 			break;
 		}
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 		}
 		break;
 	}
@@ -2988,11 +3102,12 @@ void Game::UpdateDuelParam() {
 	forbiddentypes = flag2;
 }
 void Game::UpdateExtraRules(bool set) {
-	for(int i = 0; i < sizeofarr(chkRules); i++)
+	for(auto i = 0u; i < sizeofarr(chkRules); i++)
 		chkRules[i]->setEnabled(true);
 	if(set) {
-		for(int flag = 1, i = 0; i < sizeofarr(chkRules); i++, flag = flag << 1)
+		for(auto flag = 1u, i = 0u; i < sizeofarr(chkRules); i++, flag = flag << 1) {
 			chkRules[i]->setChecked(extra_rules & flag);
+		}
 		return;
 	}
 	if(chkRules[0]->isChecked()) {
@@ -3020,15 +3135,15 @@ void Game::UpdateExtraRules(bool set) {
 		chkRules[6]->setEnabled(false);
 	}
 	extra_rules = 0;
-	for(int flag = 1, i = 0; i < sizeofarr(chkRules); i++, flag = flag << 1) {
+	for(auto flag = 1u, i = 0u; i < sizeofarr(chkRules); i++, flag <<= 1) {
 		if(chkRules[i]->isChecked())
 			extra_rules |= flag;
 	}
 }
-int Game::GetMasterRule(uint64_t param, uint32_t forbiddentypes, int* truerule) {
+int Game::GetMasterRule(uint64_t param, uint32_t forbidden, int* truerule) {
 	if(truerule)
 		*truerule = 0;
-#define CHECK(MR) case DUEL_MODE_MR##MR:{ if (truerule && forbiddentypes == DUEL_MODE_MR##MR##_FORB) *truerule = MR; break; }
+#define CHECK(MR) case DUEL_MODE_MR##MR:{ if (truerule && forbidden == DUEL_MODE_MR##MR##_FORB) *truerule = MR; break; }
 	switch(param) {
 		CHECK(1)
 		CHECK(2)
@@ -3053,7 +3168,7 @@ void Game::ResizePhaseButtons() {
 		wPhase->setRelativePosition(Resize(940, 80, 990, 340));
 		return;
 	} else if(!gGameConfig->keep_aspect_ratio) {
-		if((dInfo.duel_params & DUEL_3_COLUMNS_FIELD) && dInfo.duel_field >= 4)
+		if(dInfo.HasFieldFlag(DUEL_3_COLUMNS_FIELD | DUEL_EMZONE))
 			wPhase->setRelativePosition(Resize(480, 290, 855, 350));
 		else
 			wPhase->setRelativePosition(Resize(480, 310, 855, 330));
@@ -3073,7 +3188,7 @@ void Game::ResizePhaseButtons() {
 	irr::s32 x1 = static_cast<irr::s32>(std::round(DEFAULT_X1 * window_scale.X - offx1));
 	irr::s32 x2 = static_cast<irr::s32>(std::round(DEFAULT_X2 * window_scale.X + offx2));
 	irr::s32 y1, y2;
-	if((dInfo.duel_params & DUEL_3_COLUMNS_FIELD) && dInfo.duel_field >= 4) {
+	if(dInfo.HasFieldFlag(DUEL_3_COLUMNS_FIELD | DUEL_EMZONE)) {
 		y1 = static_cast<irr::s32>(std::round(290 * window_scale.Y));
 		y2 = static_cast<irr::s32>(std::round(350 * window_scale.Y));
 	} else {
@@ -3096,7 +3211,7 @@ void Game::SetPhaseButtons(bool visibility) {
 	// work with the relative button positions by using non scaled values
 	if(gGameConfig->alternative_phase_layout)
 		wPhase->setRelativePosition({ 940, 80, 990, 340 });
-	else if((dInfo.duel_params & DUEL_3_COLUMNS_FIELD) && dInfo.duel_field >= 4)
+	else if(dInfo.HasFieldFlag(DUEL_3_COLUMNS_FIELD | DUEL_EMZONE))
 		wPhase->setRelativePosition({ 480, 290, 855, 350 });
 	else
 		wPhase->setRelativePosition({ 480, 310, 855, 330 });
@@ -3113,8 +3228,8 @@ void Game::SetPhaseButtons(bool visibility) {
 			return;
 		}
 		// reset master rule 4 phase button position
-		if(dInfo.duel_params & DUEL_3_COLUMNS_FIELD) {
-			if(dInfo.duel_field >= 4) {
+		if(dInfo.HasFieldFlag(DUEL_3_COLUMNS_FIELD)) {
+			if(dInfo.HasFieldFlag(DUEL_EMZONE)) {
 				btnShuffle->setRelativePosition({ 0, 40, 50, 60 });
 				btnDP->setRelativePosition({ 0, 40, 50, 60 });
 				btnSP->setRelativePosition({ 0, 40, 50, 60 });
@@ -3129,14 +3244,14 @@ void Game::SetPhaseButtons(bool visibility) {
 			btnSP->setRelativePosition({ 65, 0, 115, 20 });
 			btnM1->setRelativePosition({ 130, 0, 180, 20 });
 			btnBP->setRelativePosition({ 195, 0, 245, 20 });
-			btnM2->setRelativePosition({ 260, 0, 310, 20 });
+			btnM2->setRelativePosition({ 195, 0, 245, 20 });
 			btnEP->setRelativePosition({ 260, 0, 310, 20 });
 			return;
 		}
 		btnDP->setRelativePosition({ 0, 0, 50, 20 });
 		btnEP->setRelativePosition({ 320, 0, 370, 20 });
 		btnShuffle->setRelativePosition({ 0, 0, 50, 20 });
-		if(dInfo.duel_field >= 4) {
+		if(dInfo.HasFieldFlag(DUEL_EMZONE)) {
 			btnSP->setRelativePosition({ 0, 0, 50, 20 });
 			btnM1->setRelativePosition({ 160, 0, 210, 20 });
 			btnBP->setRelativePosition({ 160, 0, 210, 20 });
@@ -3175,8 +3290,8 @@ void Game::RefreshUICoreVersion() {
 		int major, minor;
 		OCG_GetVersion(&major, &minor);
 		auto label = corename.length()
-			? fmt::format(gDataManager->GetSysString(2013), major, minor, corename)
-			: fmt::format(gDataManager->GetSysString(2010), major, minor);
+			? epro::format(gDataManager->GetSysString(2013), major, minor, corename)
+			: epro::format(gDataManager->GetSysString(2010), major, minor);
 		stCoreVersion->setText(label.data());
 	} else {
 		stCoreVersion->setText(L"");
@@ -3186,10 +3301,10 @@ void Game::RefreshUICoreVersion() {
 	wVersion->setRelativePosition(irr::core::recti(0, 0, Scale(20) + std::max({ Scale(280), w1, w2 }), Scale(135)));
 }
 std::wstring Game::GetLocalizedExpectedCore() {
-	return fmt::format(gDataManager->GetSysString(2011), OCG_VERSION_MAJOR, OCG_VERSION_MINOR);
+	return epro::format(gDataManager->GetSysString(2011), OCG_VERSION_MAJOR, OCG_VERSION_MINOR);
 }
 std::wstring Game::GetLocalizedCompatVersion() {
-	return fmt::format(gDataManager->GetSysString(2012), PRO_VERSION >> 12, (PRO_VERSION >> 4) & 0xff, PRO_VERSION & 0xf);
+	return epro::format(gDataManager->GetSysString(2012), PRO_VERSION >> 12, (PRO_VERSION >> 4) & 0xff, PRO_VERSION & 0xf);
 }
 void Game::ReloadCBSortType() {
 	cbSortType->clear();
@@ -3217,12 +3332,19 @@ void Game::ReloadCBCardType2() {
 		cbCardType2->addItem(gDataManager->GetSysString(1054).data(), TYPE_MONSTER + TYPE_NORMAL);
 		cbCardType2->addItem(gDataManager->GetSysString(1055).data(), TYPE_MONSTER + TYPE_EFFECT);
 		cbCardType2->addItem(gDataManager->GetSysString(1056).data(), TYPE_MONSTER + TYPE_FUSION);
+		//cbCardType2->addItem(gDataManager->GetSysString(1063).data(), TYPE_MONSTER + TYPE_SYNCHRO);
+		//cbCardType2->addItem(gDataManager->GetSysString(1073).data(), TYPE_MONSTER + TYPE_XYZ);
+		//cbCardType2->addItem(gDataManager->GetSysString(1074).data(), TYPE_MONSTER + TYPE_PENDULUM);
+		//cbCardType2->addItem(gDataManager->GetSysString(1075).data(), TYPE_MONSTER + TYPE_SPSUMMON);
+		//cbCardType2->addItem(gDataManager->GetSysString(1076).data(), TYPE_MONSTER + TYPE_LINK);
 		cbCardType2->addItem(gDataManager->GetSysString(1057).data(), TYPE_MONSTER + TYPE_RITUAL);
 		cbCardType2->addItem(gDataManager->GetSysString(1061).data(), TYPE_MONSTER + TYPE_GEMINI);
 		cbCardType2->addItem(gDataManager->GetSysString(1060).data(), TYPE_MONSTER + TYPE_UNION);
 		cbCardType2->addItem(gDataManager->GetSysString(1059).data(), TYPE_MONSTER + TYPE_SPIRIT);
 		cbCardType2->addItem(gDataManager->GetSysString(1071).data(), TYPE_MONSTER + TYPE_FLIP);
 		cbCardType2->addItem(gDataManager->GetSysString(1072).data(), TYPE_MONSTER + TYPE_TOON);
+		//cbCardType2->addItem(gDataManager->GetSysString(1064).data(), TYPE_MONSTER + TYPE_TOKEN);
+		//cbCardType2->addItem(gDataManager->GetSysString(1062).data(), TYPE_MONSTER + TYPE_TUNER);
 		break;
 	case 2:
 		cbCardType2->addItem(gDataManager->GetSysString(1080).data(), 0);
@@ -3259,6 +3381,7 @@ void Game::ReloadCBLimit() {
 		cbLimit->addItem(gDataManager->GetSysString(1903).data(), DeckBuilder::LIMITATION_FILTER_PRERELEASE);
 		cbLimit->addItem(gDataManager->GetSysString(1910).data(), DeckBuilder::LIMITATION_FILTER_SPEED);
 		cbLimit->addItem(gDataManager->GetSysString(1911).data(), DeckBuilder::LIMITATION_FILTER_RUSH);
+		cbLimit->addItem(gDataManager->GetSysString(1912).data(), DeckBuilder::LIMITATION_FILTER_LEGEND);
 		if(chkAnime->isChecked()) {
 			cbLimit->addItem(gDataManager->GetSysString(1265).data(), DeckBuilder::LIMITATION_FILTER_ANIME);
 			cbLimit->addItem(gDataManager->GetSysString(1266).data(), DeckBuilder::LIMITATION_FILTER_ILLEGAL);
@@ -3267,6 +3390,7 @@ void Game::ReloadCBLimit() {
 		}
 	} else {
 		chkAnime->setEnabled(false);
+		cbLimit->addItem(gDataManager->GetSysString(1912).data(), DeckBuilder::LIMITATION_FILTER_LEGEND);
 		cbLimit->addItem(gDataManager->GetSysString(1310).data(), DeckBuilder::LIMITATION_FILTER_ALL);
 	}
 }
@@ -3281,17 +3405,17 @@ void Game::ReloadCBRace() {
 	cbRace->addItem(gDataManager->GetSysString(1310).data(), 0);
 	for(uint32_t filter = 0x1, i = 1020; filter <= RACE_MAX; i++, filter <<= 1)
 	{
-		/*// exclude removed races without breaking types of imported cards with existing races
+		// exclude removed races without breaking types of imported cards with existing races
 		if (filter == 0x100 || filter == 0x200 || filter == 0x1000 || filter == 0x8000 ||
 			filter == 0x10000 || filter == 0x20000 || filter == 0x40000 || filter == 0x400000 ||
 			filter == 0x800000 || filter == 0x1000000 || filter == 0x2000000)
-			continue;*/
+			continue;
 		cbRace->addItem(gDataManager->GetSysString(i).data(), filter);
 	}
 }
 void Game::ReloadCBFilterRule() {
 	cbFilterRule->clear();
-	cbFilterRule->addItem(fmt::format(L"[{}]", gDataManager->GetSysString(1225)).data());
+	cbFilterRule->addItem(epro::format(L"[{}]", gDataManager->GetSysString(1225)).data());
 	for (auto i = 1900; i <= 1904; ++i)
 		cbFilterRule->addItem(gDataManager->GetSysString(i).data());
 }
@@ -3324,12 +3448,23 @@ void Game::ReloadCBCurrentSkin() {
 }
 void Game::ReloadCBCoreLogOutput() {
 	gSettings.cbCoreLogOutput->clear();
-	for (int i = CORE_LOG_NONE; i <= 3; i++) {
+	for (uint32_t i = CORE_LOG_NONE; i <= 3; i++) {
 		auto itemIndex = gSettings.cbCoreLogOutput->addItem(gDataManager->GetSysString(2000 + i).data(), i);
 		if (gGameConfig->coreLogOutput == i) {
 			gSettings.cbCoreLogOutput->setSelected(itemIndex);
 		}
 	}
+}
+void Game::ReloadCBVsync() {
+	gSettings.cbVSync->clear();
+	auto max = 12118;
+#if (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+	const auto type = driver->getDriverType();
+	if(type == irr::video::EDT_DIRECT3D9)
+#endif
+		max = 12115;
+	for(int i = 12114; i <= max; ++i)
+		gSettings.cbVSync->addItem(gDataManager->GetSysString(i).data());
 }
 void Game::ReloadElementsStrings() {
 	ShowCardInfo(showingcard, true);
@@ -3338,14 +3473,14 @@ void Game::ReloadElementsStrings() {
 		elem.first->setText(gDataManager->GetSysString(elem.second).data());
 	}
 
-	uint32_t nullLFlist = gdeckManager->_lfList.size() - 1;
+	size_t nullLFlist = gdeckManager->_lfList.size() - 1;
 	gdeckManager->_lfList[nullLFlist].listName = gDataManager->GetSysString(1442).data();
 	auto prev = cbDBLFList->getSelected();
-	cbDBLFList->removeItem(nullLFlist);
+	cbDBLFList->removeItem(static_cast<irr::u32>(nullLFlist));
 	cbDBLFList->addItem(gdeckManager->_lfList[nullLFlist].listName.data(), gdeckManager->_lfList[nullLFlist].hash);
 	cbDBLFList->setSelected(prev);
 	prev = cbHostLFList->getSelected();
-	cbHostLFList->removeItem(nullLFlist);
+	cbHostLFList->removeItem(static_cast<irr::u32>(nullLFlist));
 	cbHostLFList->addItem(gdeckManager->_lfList[nullLFlist].listName.data(), gdeckManager->_lfList[nullLFlist].hash);
 	cbHostLFList->setSelected(prev);
 
@@ -3423,7 +3558,7 @@ void Game::ReloadElementsStrings() {
 	stExpectedCoreVersion->setText(GetLocalizedExpectedCore().data());
 	stCompatVersion->setText(GetLocalizedCompatVersion().data());
 
-#define TYPECHK(id,stringid) chkTypeLimit[id]->setText(fmt::sprintf(gDataManager->GetSysString(1627), gDataManager->GetSysString(stringid)).data());
+#define TYPECHK(id,stringid) chkTypeLimit[id]->setText(epro::sprintf(gDataManager->GetSysString(1627), gDataManager->GetSysString(stringid)).data());
 	TYPECHK(0, 1056);
 	TYPECHK(1, 1063);
 	TYPECHK(2, 1073);
@@ -3448,7 +3583,7 @@ void Game::OnResize() {
 	wMainMenu->setRelativePosition(ResizeWin(mainMenuLeftX, 200, mainMenuRightX, 450));
 	wBtnSettings->setRelativePosition(ResizeWin(0, 610, 30, 640));
 	SetCentered(wCommitsLog);
-	SetCentered(updateWindow);
+	SetCentered(updateWindow, false);
 
 	SetCentered(wYdkeManage, false);
 	SetCentered(wHandTest, false);
@@ -3468,8 +3603,8 @@ void Game::OnResize() {
 	stScale->setRelativePosition(ResizeWin(110, 74, 150, 94));
 
 	wLanWindow->setRelativePosition(ResizeWin(220, 100, 800, 520));
-	wtcCreateHost->setRelativePosition(ResizeWin(320, 100, 700, 500));
-	if (dInfo.opponames.size() + dInfo.selfnames.size()>=5) {
+	SetCentered(wCreateHost, false);
+	if(dInfo.opponames.size() + dInfo.selfnames.size() >= 5) {
 		wHostPrepare->setRelativePosition(ResizeWin(270, 120, 750, 500));
 		wHostPrepareR->setRelativePosition(ResizeWin(750, 120, 950, 500));
 		wHostPrepareL->setRelativePosition(ResizeWin(70, 120, 270, 500));
@@ -3652,38 +3787,6 @@ void Game::ValidateName(irr::gui::IGUIElement* obj) {
 	if(text.size() != oldsize)
 		obj->setText(text.data());
 }
-std::wstring Game::ReadPuzzleMessage(epro::wstringview script_name) {
-	FileStream infile{ Utils::ToPathString(script_name), FileStream::in };
-	if(infile.fail())
-		return {};
-	std::string str;
-	std::string res = "";
-	size_t start = std::string::npos;
-	bool stop = false;
-	while(!stop && std::getline(infile, str)) {
-		auto pos = str.find('\r');
-		if(str.size() && pos != std::string::npos)
-			str.erase(pos);
-		bool was_empty = str.empty();
-		if(start == std::string::npos) {
-			start = str.find("--[[message");
-			if(start == std::string::npos)
-				continue;
-			str.erase(0, start + 11);
-		}
-		size_t end = str.find("]]");
-		if(end != std::string::npos) {
-			str.erase(end);
-			stop = true;
-		}
-		if(str.empty() && !was_empty)
-			continue;
-		if(!res.empty() || was_empty)
-			res += "\n";
-		res += str;
-	}
-	return BufferIO::DecodeUTF8(res);
-}
 epro::path_string Game::FindScript(epro::path_stringview name, irr::io::IReadFile** retarchive) {
 	for(auto& path : script_dirs) {
 		if(path == EPRO_TEXT("archives")) {
@@ -3730,7 +3833,7 @@ std::vector<char> Game::LoadScript(epro::stringview _name) {
 }
 bool Game::LoadScript(OCG_Duel pduel, epro::stringview script_name) {
 	auto buf = LoadScript(script_name);
-	return buf.size() && OCG_LoadScript(pduel, buf.data(), buf.size(), script_name.data());
+	return buf.size() && OCG_LoadScript(pduel, buf.data(), static_cast<uint32_t>(buf.size()), script_name.data());
 }
 OCG_Duel Game::SetupDuel(OCG_DuelOptions opts) {
 	opts.cardReader = DataManager::CardReader;
@@ -3739,6 +3842,7 @@ OCG_Duel Game::SetupDuel(OCG_DuelOptions opts) {
 	opts.payload2 = this;
 	opts.logHandler = MessageHandler;
 	opts.payload3 = this;
+	opts.enableUnsafeLibraries = 1;
 	OCG_Duel pduel = nullptr;
 	OCG_CreateDuel(&pduel, opts);
 	LoadScript(pduel, "constant.lua");
@@ -3763,32 +3867,30 @@ void Game::MessageHandler(void* payload, const char* string, int type) {
 }
 void Game::UpdateDownloadBar(int percentage, int cur, int tot, const char* filename, bool is_new, void* payload) {
 	Game* game = static_cast<Game*>(payload);
-	std::lock_guard<std::mutex> lk(game->gMutex);
+	std::lock_guard<epro::mutex> lk(game->progressStatusLock);
+	auto& status = game->progressStatus;
+	status.progressBottom = percentage;
 	game->updateProgressBottom->setProgress(percentage);
-	if(is_new)
-		game->updateProgressText->setText(
-			fmt::format(L"{}\n{}",
-				fmt::format(gDataManager->GetSysString(1462), BufferIO::DecodeUTF8(filename)),
-				fmt::format(gDataManager->GetSysString(1464), cur, tot)
-			).data());
+	if((status.newFile |= is_new) == true)
+		status.progressText = epro::format(L"{}\n{}",
+										  epro::format(gDataManager->GetSysString(1462), BufferIO::DecodeUTF8(filename)),
+										  epro::format(gDataManager->GetSysString(1464), cur, tot));
 }
 void Game::UpdateUnzipBar(unzip_payload* payload) {
 	UnzipperPayload* unzipper = static_cast<UnzipperPayload*>(payload->payload);
 	Game* game = static_cast<Game*>(unzipper->payload);
-	std::lock_guard<std::mutex> lk(game->gMutex);
+	std::lock_guard<epro::mutex> lk(game->progressStatusLock);
+	auto& status = game->progressStatus;
 	// current archive
-	if(payload->is_new) {
-		game->updateProgressText->setText(
-			fmt::format(L"{}\n{}",
-				fmt::format(gDataManager->GetSysString(1463), Utils::ToUnicodeIfNeeded(unzipper->filename)),
-				fmt::format(gDataManager->GetSysString(1464), unzipper->cur, unzipper->tot)
-			).data());
-		game->updateProgressTop->setVisible(true);
-		game->updateSubprogressText->setText(fmt::format(gDataManager->GetSysString(1465), Utils::ToUnicodeIfNeeded(payload->filename)).data());
+	if((status.newFile |= payload->is_new) == true) {
+		status.progressText = epro::format(L"{}\n{}",
+										  epro::format(gDataManager->GetSysString(1463), Utils::ToUnicodeIfNeeded(unzipper->filename)),
+										  epro::format(gDataManager->GetSysString(1464), unzipper->cur, unzipper->tot));
+		status.subProgressText = epro::format(gDataManager->GetSysString(1465), Utils::ToUnicodeIfNeeded(payload->filename));
 	}
-	game->updateProgressTop->setProgress(std::round((double)payload->cur / (double)payload->tot * 100));
+	status.progressTop = static_cast<irr::s32>(((double)payload->cur / (double)payload->tot) * 100);
 	// current file in archive
-	game->updateProgressBottom->setProgress(payload->percentage);
+	status.progressBottom = payload->percentage;
 }
 void Game::PopulateResourcesDirectories() {
 	script_dirs.push_back(EPRO_TEXT("./expansions/script/"));
@@ -3828,11 +3930,11 @@ void Game::ApplyLocale(size_t index, bool forced) {
 	if(index > 0) {
 		try {
 			gGameConfig->locale = locales[index - 1].first;
-			auto locale = fmt::format(EPRO_TEXT("./config/languages/{}"), gGameConfig->locale);
+			auto locale = epro::format(EPRO_TEXT("./config/languages/{}"), gGameConfig->locale);
 			for(auto& file : Utils::FindFiles(locale, { EPRO_TEXT("cdb") })) {
-				gDataManager->LoadLocaleDB(fmt::format(EPRO_TEXT("{}/{}"), locale, file));
+				gDataManager->LoadLocaleDB(epro::format(EPRO_TEXT("{}/{}"), locale, file));
 			}
-			gDataManager->LoadLocaleStrings(fmt::format(EPRO_TEXT("{}/strings.conf"), locale));
+			gDataManager->LoadLocaleStrings(epro::format(EPRO_TEXT("{}/strings.conf"), locale));
 			auto& extra = locales[index - 1].second;
 			bool refresh_db = false;
 			for(auto& path : extra) {

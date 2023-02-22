@@ -15,6 +15,18 @@ curl --retry 5 --connect-timeout 30 --location --remote-header-name --remote-nam
 # rm -rf freetype-2.6.5
 # rm freetype-2.6.5.tar.bz2
 
+# We wrap irrKlang32's extract because its zip has a hidden macOS directory that we don't want
+curl --retry 5 --connect-timeout 30 --location --remote-header-name --remote-name https://www.ambiera.at/downloads/irrKlang-32bit-1.6.0.zip
+echo Extracting irrKlang32...
+unzip -uo irrKlang-32bit-1.6.0.zip -d irrKlang-tmp > /dev/null
+# Merge 32-bit binaries into folder
+mv irrKlang-tmp/irrKlang-1.6.0/bin/win32-gcc irrKlang/bin/win32-gcc
+mv irrKlang-tmp/irrKlang-1.6.0/bin/win32-visualStudio irrKlang/bin/win32-visualStudio
+mv irrKlang-tmp/irrKlang-1.6.0/lib/Win32-gcc irrKlang/lib/Win32-gcc
+mv irrKlang-tmp/irrKlang-1.6.0/lib/Win32-visualStudio irrKlang/lib/Win32-visualStudio
+rm -rf irrKlang-tmp
+rm irrKlang-32bit-1.6.0.zip
+
 # install UPX
 curl --retry 5 --connect-timeout 30 --location --remote-header-name --remote-name https://github.com/upx/upx/releases/download/v3.96/upx-3.96-win64.zip
 unzip -uo upx-3.96-win64.zip > /dev/null
