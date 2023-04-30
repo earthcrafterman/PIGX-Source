@@ -1,5 +1,6 @@
 #include "epro_thread.h"
-#ifndef _WIN32
+#include "config.h"
+#if EDOPRO_POSIX
 #include <arpa/inet.h>
 #endif
 #include "netserver.h"
@@ -62,9 +63,9 @@ bool NetServer::StartBroadcast() {
 	if(!net_evbase)
 		return false;
 	evutil_socket_t udp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	ev_socklen_t opt = true;
-	setsockopt(udp, SOL_SOCKET, SO_BROADCAST, (const char*)&opt, sizeof(ev_socklen_t));
-	setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(ev_socklen_t));
+	int opt = 1;
+	setsockopt(udp, SOL_SOCKET, SO_BROADCAST, (const char*)&opt, (ev_socklen_t)sizeof(opt));
+	setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, (ev_socklen_t)sizeof(opt));
 	sockaddr_in addr;
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;

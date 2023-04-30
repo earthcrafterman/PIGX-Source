@@ -2,6 +2,7 @@
 #define MENU_HANDLER_H
 
 #include "config.h"
+#include <unordered_map>
 #include <IEventReceiver.h>
 #include <IGUIElement.h>
 #include <map>
@@ -49,6 +50,7 @@ enum GUI {
 	EDITBOX_NUMERIC,
 	BUTTON_HP_AI_TOGGLE,
 	BUTTON_BOT_ADD,
+	BUTTON_BOT_COPY_COMMAND,
 	EDITBOX_CHAT,
 	EDITBOX_PORT_BOX,
 	COMBOBOX_BOT_DECK,
@@ -260,7 +262,7 @@ enum GUI {
 
 	ACTION_UPDATE_PROMPT,
 	ACTION_SHOW_CHANGELOG,
-#if defined(__linux__) && !defined(__ANDROID__) && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
+#if EDOPRO_LINUX && (IRRLICHT_VERSION_MAJOR==1 && IRRLICHT_VERSION_MINOR==9)
 	ACTION_TRY_WAYLAND,
 #endif
 	SETTINGS_WINDOW_ELEMENT,

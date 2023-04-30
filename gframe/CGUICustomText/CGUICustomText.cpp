@@ -15,6 +15,7 @@
 #endif
 #include <algorithm>
 #include <cmath>
+#include "../config.h"
 #include "../game_config.h"
 
 namespace irr {
@@ -385,7 +386,7 @@ void CGUICustomText::breakText() {
 		scrText->setEnabled(false);
 		if(getTextHeight() > RelativeRect.getHeight()) {
 			scrText->setEnabled(true);
-#ifdef __ANDROID__
+#if EDOPRO_ANDROID
 			if(ygo::gGameConfig->native_mouse)
 #endif
 			{
@@ -431,6 +432,8 @@ void CGUICustomText::breakText(bool scrollbar_spacing) {
 		tmpWidth -= scrText->getRelativePosition().getWidth();
 	u32 elWidth = (u32)std::max(tmpWidth, 0);
 	if(elWidth < font->getDimension(L"A").Width)
+		return;
+	if(size == 0)
 		return;
 	wchar_t c;
 
