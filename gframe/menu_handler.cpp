@@ -958,7 +958,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					mainGame->ebSideMin->setText(fmt::to_wstring<int>(size.side.min).data());
 					mainGame->ebSideMax->setText(fmt::to_wstring<int>(size.side.max).data());
 				};
-				static constexpr DeckSizes ocg_deck_sizes{ {40,60}, {0,15}, {0,15} };
+				static constexpr DeckSizes ocg_deck_sizes{ {60,60}, {0,30}, {0,30} };
 				static constexpr DeckSizes rush_deck_sizes{ {40,60}, {0,15}, {0,15} };
 				static constexpr DeckSizes speed_deck_sizes{ {20,30}, {0,6}, {0,6} };
 				static constexpr DeckSizes goat_deck_sizes{ {40,60}, {0,999}, {0,15} };

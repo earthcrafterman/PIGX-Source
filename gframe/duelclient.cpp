@@ -31,7 +31,7 @@
 #include "utils.h"
 #include "porting.h"
 
-#define DEFAULT_DUEL_RULE 5
+#define DEFAULT_DUEL_RULE 1
 namespace ygo {
 
 uint32_t DuelClient::connect_state = 0;
@@ -237,12 +237,12 @@ catch(...) { what = def; }
 			if(mainGame->chkNoCheckDeckSize->isChecked()) {
 				sizes = nolimit_deck_sizes;
 			} else {
-				TOI(sizes.main.min, mainGame->ebMainMin->getText(), 40);
+				TOI(sizes.main.min, mainGame->ebMainMin->getText(), 60);
 				TOI(sizes.main.max, mainGame->ebMainMax->getText(), 60);
 				TOI(sizes.extra.min, mainGame->ebExtraMin->getText(), 0);
-				TOI(sizes.extra.max, mainGame->ebExtraMax->getText(), 15);
+				TOI(sizes.extra.max, mainGame->ebExtraMax->getText(), 30);
 				TOI(sizes.side.min, mainGame->ebSideMin->getText(), 0);
-				TOI(sizes.side.max, mainGame->ebSideMax->getText(), 15);
+				TOI(sizes.side.max, mainGame->ebSideMax->getText(), 30);
 			}
 #undef TOI
 			if(mainGame->btnRelayMode->isPressed())
@@ -460,7 +460,7 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
 		case ERROR_TYPE::DECKERROR: {
 			auto pkt = BufferIO::getStruct<DeckError>(pdata, len);
 			std::lock_guard<epro::mutex> lock(mainGame->gMutex);
-			int mainmin = 60, mainmax = 60, extramax = 30, sidemax = 15;
+			int mainmin = 60, mainmax = 60, extramax = 30, sidemax = 30;
 			uint32_t code = 0, curcount = 0;
 			DeckError::DERR_TYPE flag = DeckError::NONE;
 			if(mainGame->dInfo.compat_mode) {
@@ -4060,11 +4060,11 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			mainGame->dInfo.duel_field = field;
 			switch(field) {
 				case 1: mainGame->dInfo.duel_params = DUEL_MODE_MR1; break;
-				case 2: mainGame->dInfo.duel_params = DUEL_MODE_MR2; break;
 				case 3: mainGame->dInfo.duel_params = DUEL_MODE_MR3; break;
 				case 4: mainGame->dInfo.duel_params = DUEL_MODE_MR4; break;
-				default:
 				case 5: mainGame->dInfo.duel_params = DUEL_MODE_MR5; break;
+				default:
+				case 2: mainGame->dInfo.duel_params = DUEL_MODE_MR2; break;
 			}
 		} else {
 			uint32_t opts = BufferIO::Read<uint32_t>(pbuf);
@@ -4413,12 +4413,12 @@ void DuelClient::BroadcastReply(evutil_socket_t fd, short events, void* arg) {
 				return epro::format(L"MR {}", (rule == 0) ? 3 : rule);
 			};
 			auto GetIsCustom = [&packet,&rule, is_compact_mode] {
-				static constexpr DeckSizes normal_sizes{ {40,60}, {0,15}, {0,15} };
+				static constexpr DeckSizes normal_sizes{ {60,60}, {0,30}, {0,30} };
 				if(packet.host.draw_count == 1 && packet.host.start_hand == 5 && packet.host.start_lp == 8000
 				   && !packet.host.no_check_deck_content && !packet.host.no_shuffle_deck
 				   && (packet.host.duel_flag_low & DUEL_PSEUDO_SHUFFLE) == 0
 				   && rule == DEFAULT_DUEL_RULE && packet.host.extra_rules == 0
-				   && (is_compact_mode || (packet.host.version.client.major < 40) || packet.host.sizes == normal_sizes))
+				   && (is_compact_mode || (packet.host.version.client.major < 60) || packet.host.sizes == normal_sizes))
 					return gDataManager->GetSysString(1280);
 				return gDataManager->GetSysString(1281);
 			};

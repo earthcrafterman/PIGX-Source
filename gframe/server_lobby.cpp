@@ -136,7 +136,7 @@ void ServerLobby::FillOnlineRooms() {
 		roomListTable->setCellText(index, 6, room.description.data());
 		roomListTable->setCellText(index, 7, room.started ? gDataManager->GetSysString(1986).data() : gDataManager->GetSysString(1987).data());
 
-		static constexpr DeckSizes normal_sizes{ {40,60}, {0,15}, {0,15} };
+		static constexpr DeckSizes normal_sizes{ {60,60}, {0,30}, {0,30} };
 
 		irr::video::SColor color;
 		if(room.started)

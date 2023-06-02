@@ -629,7 +629,7 @@ void Game::Initialize() {
 	defaultStrings.emplace_back(tmpptr, 1236);
 	cbHandTestDuelRule = AddComboBox(env, nextHandTestRow(95, mainMenuWidth - 10, false), wHandTest);
 	ReloadCBDuelRule(cbHandTestDuelRule);
-	cbHandTestDuelRule->setSelected(4);
+	cbHandTestDuelRule->setSelected(1);
 	chkHandTestSaveReplay = env->addCheckBox(gGameConfig->saveHandTest, nextHandTestRow(10, mainMenuWidth - 10), wHandTest, CHECKBOX_SAVE_HAND_TEST_REPLAY, gDataManager->GetSysString(2077).data());
 	defaultStrings.emplace_back(chkHandTestSaveReplay, 2077);
 	tmpptr = env->addButton(nextHandTestRow(10, mainMenuWidth / 2 - 5), wHandTest, BUTTON_HAND_TEST_CANCEL, gDataManager->GetSysString(1210).data()); // cancel
@@ -3424,25 +3424,15 @@ void Game::ReloadCBAttribute() {
 void Game::ReloadCBRace() {
 	cbRace->clear();
 	cbRace->addItem(gDataManager->GetSysString(1310).data(), 0);
-	//currently corresponding to RACE_GALAXY
-	static constexpr auto CURRENTLY_KNOWN_RACES = 32;
+	//currently corresponding to Divine-Beast
+	static constexpr auto CURRENTLY_KNOWN_RACES = 21;
 	uint32_t i = 0;
 	for(; i < CURRENTLY_KNOWN_RACES; ++i)
+	{
 		// exclude removed races without breaking types of imported cards with existing races
-		if (i == 0x100 || i == 0x200 || i == 0x1000 || i == 0x8000 ||
-			i == 0x10000 || i == 0x20000 || i == 0x40000 || i == 0x400000 ||
-			i == 0x800000 || i == 0x1000000 || i == 0x2000000)
+		if (i == 8 || i == 9 || i == 12 || i == 25 || i == 26 || i == 27 || i == 28)
 			continue;
 		cbRace->addItem(gDataManager->GetSysString(gDataManager->GetRaceStringIndex(i)).data(), i + 1);
-	for(; i < 64; ++i) {
-		// exclude removed races without breaking types of imported cards with existing races
-		if (i == 0x100 || i == 0x200 || i == 0x1000 || i == 0x8000 ||
-			i == 0x10000 || i == 0x20000 || i == 0x40000 || i == 0x400000 ||
-			i == 0x800000 || i == 0x1000000 || i == 0x2000000)
-			continue;
-		auto idx = gDataManager->GetRaceStringIndex(i);
-		if(gDataManager->HasSysString(idx))
-			cbRace->addItem(gDataManager->GetSysString(idx).data(), i + 1);
 	}
 }
 void Game::ReloadCBFilterRule() {

@@ -553,8 +553,8 @@ static constexpr size_t BufferSize(size_t mainc, size_t sidec) {
 }
 
 bool DeckManager::ImportDeckBase64Omega(Deck& deck, epro::wstringview buffer) {
-	constexpr size_t max_main = 60 + 15;
-	constexpr size_t max_side = 15;
+	constexpr size_t max_main = 60 + 30;
+	constexpr size_t max_side = 30;
 	constexpr size_t max_size = BufferSize(max_main, max_side);
 	uint8_t out_buf[max_size];
 	const auto size = gzinflate(base64_decode(buffer, false, true), out_buf);

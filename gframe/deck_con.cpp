@@ -1514,7 +1514,7 @@ bool DeckBuilder::push_extra(const CardDataC* pointer, int seq, bool forced) {
 }
 bool DeckBuilder::push_side(const CardDataC* pointer, int seq, bool forced) {
 	auto& container = current_deck.side;
-	if(!mainGame->is_siding && !forced && container.size() >= 15)
+	if(!mainGame->is_siding && !forced && container.size() >= 30)
 		return false;
 	if(seq >= 0 && seq < (int)container.size())
 		container.insert(container.begin() + seq, pointer);
