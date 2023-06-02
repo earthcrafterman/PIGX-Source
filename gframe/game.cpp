@@ -3430,7 +3430,7 @@ void Game::ReloadCBRace() {
 	for(; i < CURRENTLY_KNOWN_RACES; ++i)
 	{
 		// exclude removed races without breaking types of imported cards with existing races
-		if (i == 8 || i == 9 || i == 12 || i == 25 || i == 26 || i == 27 || i == 28)
+		if (i == 8 || i == 9 || i == 12 || i == 15 || i == 16 || i == 17 || i == 18)
 			continue;
 		cbRace->addItem(gDataManager->GetSysString(gDataManager->GetRaceStringIndex(i)).data(), i + 1);
 	}
