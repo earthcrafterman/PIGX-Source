@@ -3425,7 +3425,7 @@ void Game::ReloadCBRace() {
 	cbRace->clear();
 	cbRace->addItem(gDataManager->GetSysString(1310).data(), 0);
 	//currently corresponding to Divine-Beast
-	static constexpr auto CURRENTLY_KNOWN_RACES = 21;
+	static constexpr auto CURRENTLY_KNOWN_RACES = 22;
 	uint32_t i = 0;
 	for(; i < CURRENTLY_KNOWN_RACES; ++i)
 	{
